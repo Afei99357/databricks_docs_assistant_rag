@@ -6,6 +6,22 @@ from typing import Protocol
 import requests
 
 
+def _response_text(content) -> str:
+    """Normalize classic chat text and Responses-style content parts."""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text" and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+            elif getattr(item, "type", None) == "text" and isinstance(getattr(item, "text", None), str):
+                parts.append(item.text)
+        return "\n".join(parts).strip()
+    raise RuntimeError("Databricks chat endpoint returned an unsupported message-content format")
+
+
 class AnswerProvider(Protocol):
     name: str
     model: str
@@ -38,4 +54,4 @@ class DatabricksEndpointProvider:
             name=self.model,
             messages=[ChatMessage(role=ChatMessageRole.USER, content=prompt)],
         )
-        return response.choices[0].message.content.strip()
+        return _response_text(response.choices[0].message.content)
