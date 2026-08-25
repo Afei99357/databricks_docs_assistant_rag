@@ -27,11 +27,21 @@ resources:
             securable_full_name: ${var.catalog}.${var.schema}.rag_conversations
             securable_type: TABLE
             permission: MODIFY
+        - name: rag_conversations_read
+          uc_securable:
+            securable_full_name: ${var.catalog}.${var.schema}.rag_conversations
+            securable_type: TABLE
+            permission: SELECT
         - name: rag_conversation_turns
           uc_securable:
             securable_full_name: ${var.catalog}.${var.schema}.rag_conversation_turns
             securable_type: TABLE
             permission: MODIFY
+        - name: rag_conversation_turns_read
+          uc_securable:
+            securable_full_name: ${var.catalog}.${var.schema}.rag_conversation_turns
+            securable_type: TABLE
+            permission: SELECT
         - name: qwen_embedding
           serving_endpoint:
             name: ${var.embedding_endpoint}
