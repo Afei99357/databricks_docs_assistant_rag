@@ -8,6 +8,7 @@ from flask import Flask, jsonify, render_template, request
 
 from rag.llm.grounding import answer_groundedly
 from rag.models import RetrievalResult
+from rag.conversation import resolve_follow_up
 
 STARTER_QUESTIONS = [
     "What is Volume Content Search and what are its limitations?",
@@ -45,15 +46,19 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         question = payload.get("question", "").strip()
         if not question:
             return jsonify({"error": "Enter a question."}), 400
-        started = perf_counter()
-        retrieved = retrieve(question)
-        result = answer_groundedly(question, retrieved, provider, threshold=threshold)
         conversation_id = payload.get("conversation_id") or None
+        owner = identity.current_user_id(request) if history and identity else None
+        prior_turns = history.turns_for(owner, conversation_id) if conversation_id else []
+        if conversation_id and history and not prior_turns:
+            return jsonify({"error": "Conversation not found."}), 404
+        resolved_query = resolve_follow_up(question, prior_turns, provider) if prior_turns else question
+        started = perf_counter()
+        retrieved = retrieve(resolved_query)
+        result = answer_groundedly(question, retrieved, provider, threshold=threshold)
         if history and identity:
-            owner = identity.current_user_id(request)
             conversation_id = conversation_id or history.create(owner, question)
-            history.append_turn(owner, conversation_id, question=question, resolved_query=question, answer=result,
-                                citation_ids=[item.chunk.chunk_id for item in result.citations], latency_ms=round((perf_counter() - started) * 1000))
+            history.append_turn(owner, conversation_id, question=question, resolved_query=resolved_query, answer=result,
+                                citation_ids=[item.chunk_id for item in result.citations], latency_ms=round((perf_counter() - started) * 1000))
         return jsonify({"question": question, "answer": result.text, "supported": result.supported,
                         "provider": result.provider, "snapshot_id": result.snapshot_id,
                         "latency_ms": round((perf_counter() - started) * 1000),
