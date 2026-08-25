@@ -231,8 +231,11 @@ def _crawl_path_allowed(path: str, source: CrawlSource) -> bool:
         return False
     suffix = relative[len(root_path) + 1 :]
     if any(
-        suffix == prefix.rstrip("/") or suffix.startswith(prefix.rstrip("/") + "/")
+        suffix == normalized
+        or suffix.startswith(normalized + "/")
+        or f"/{normalized}/" in f"/{suffix}/"
         for prefix in source.excluded_prefixes
+        for normalized in (prefix.rstrip("/"),)
     ):
         return False
     return any(

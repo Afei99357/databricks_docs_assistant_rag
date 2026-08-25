@@ -60,7 +60,7 @@ def test_bounded_site_crawler_discovers_allowed_new_pages_and_excludes_other_sec
         category="blueprint-genie",
         reason="test",
         allowed_prefixes=("trust/",),
-        excluded_prefixes=("trust/private/",),
+        excluded_prefixes=("private/",),
         max_depth=2,
     )
     pages = {
