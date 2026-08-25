@@ -13,11 +13,10 @@ class ActiveSnapshotRetriever:
         self.root, self.embedder, self.top_k = Path(root), embedder, top_k
         self._snapshot: FaissSnapshot | None = None
 
-    def retrieve(self, question: str) -> list[RetrievalResult]:
+    def retrieve(self, question: str, top_k: int | None = None) -> list[RetrievalResult]:
         snapshot_id = read_active_manifest(self.root)
         if not snapshot_id:
             raise RuntimeError("no active retrieval snapshot is available")
         if self._snapshot is None or self._snapshot.snapshot_id != snapshot_id:
             self._snapshot = FaissSnapshot.load(self.root / "snapshots" / snapshot_id, snapshot_id)
-        return self._snapshot.search(question, self.embedder, self.top_k)
-
+        return self._snapshot.search(question, self.embedder, top_k or self.top_k)
