@@ -5,8 +5,10 @@ import argparse
 import os
 from pathlib import Path
 
-from rag.config import Settings
 from rag.agent.retrieval import RetrievalAgent
+from rag.config import Settings
+from rag.history import ConversationRepository
+from rag.identity import LocalTestIdentityProvider
 from rag.ingest.fetch import fetch_page
 from rag.ingest.sources import GENIE_LANDING_URL, discover_genie_core, load_curated_docs
 from rag.index.embeddings import OllamaEmbeddingProvider
@@ -47,8 +49,10 @@ def serve() -> None:
     from rag.app.web import create_app
     store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
     feedback = DatabricksFeedbackSink(store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model)
+    history = ConversationRepository(store, settings.namespace)
+    identity = LocalTestIdentityProvider()
     agent = RetrievalAgent(retriever.retrieve, provider)
-    create_app(retrieve=agent.retrieve, provider=provider, threshold=settings.relevance_threshold, feedback_sink=feedback).run(
+    create_app(retrieve=agent.retrieve, provider=provider, threshold=settings.relevance_threshold, feedback_sink=feedback, history=history, identity=identity).run(
         host="127.0.0.1", port=int(os.getenv("PORT", "8000")), debug=False)
 
 
