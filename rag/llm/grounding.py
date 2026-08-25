@@ -11,7 +11,7 @@ SELECTED_LABEL = re.compile(r"\b(S\d+)\b")
 
 
 def select_evidence(question: str, candidates: list[RetrievalResult], provider: AnswerProvider,
-                    *, minimum: int = 4, maximum: int = 6) -> list[RetrievalResult]:
+                    *, minimum: int = 5, maximum: int = 10) -> list[RetrievalResult]:
     """Use the local LLM only to select evidence IDs, never to answer the question."""
     labelled = "\n\n".join(
         f"S{i}: {item.chunk.source_title}\n{item.chunk.text}" for i, item in enumerate(candidates, 1)
@@ -25,10 +25,17 @@ Candidates:
 {labelled}"""
     labels = SELECTED_LABEL.findall(provider.complete(prompt))
     selected: list[RetrievalResult] = []
+    per_document: dict[str, int] = {}
     for label in labels:
         position = int(label[1:]) - 1
         if 0 <= position < len(candidates) and candidates[position] not in selected:
-            selected.append(candidates[position])
+            item = candidates[position]
+            # Preserve evidence diversity: one oversized page should not
+            # crowd out every other official source unless selection needs it.
+            if per_document.get(item.chunk.doc_id, 0) >= 2:
+                continue
+            selected.append(item)
+            per_document[item.chunk.doc_id] = per_document.get(item.chunk.doc_id, 0) + 1
         if len(selected) == maximum:
             break
     # Invalid/insufficient selector output must not prevent a grounded answer.

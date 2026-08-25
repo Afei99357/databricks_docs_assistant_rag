@@ -37,7 +37,7 @@ class Settings:
         return cls(os.environ["RAG_CATALOG"], os.environ["RAG_SCHEMA"], os.environ["RAG_WAREHOUSE_ID"],
                    os.getenv("RAG_ARTIFACT_VOLUME", "rag_artifacts"),
                    os.getenv("RAG_EMBEDDING_MODEL", "qwen3-embedding:4b"),
-                   int(os.getenv("RAG_RETRIEVAL_TOP_K", "15")), float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.35")),
+                   int(os.getenv("RAG_RETRIEVAL_TOP_K", "25")), float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.35")),
                    os.getenv("ANSWER_PROVIDER", "ollama"), os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
                    os.getenv("OLLAMA_MODEL", "qwen3.5"), os.getenv("DATABRICKS_CHAT_ENDPOINT", "databricks-gpt-oss-20b"),
                    os.getenv("RAG_DATABRICKS_PROFILE") or None)
