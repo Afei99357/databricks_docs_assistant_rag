@@ -5,6 +5,7 @@ import argparse
 import os
 from pathlib import Path
 
+from rag.agent.retrieval import RetrievalAgent
 from rag.config import Settings
 from rag.history import ConversationRepository
 from rag.identity import LocalTestIdentityProvider
@@ -50,7 +51,8 @@ def serve() -> None:
     feedback = DatabricksFeedbackSink(store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model)
     history = ConversationRepository(store, settings.namespace)
     identity = LocalTestIdentityProvider()
-    create_app(retrieve=retriever.retrieve, provider=provider, threshold=settings.relevance_threshold, feedback_sink=feedback, history=history, identity=identity).run(
+    agent = RetrievalAgent(retriever.retrieve, provider)
+    create_app(retrieve=agent.retrieve, provider=provider, threshold=settings.relevance_threshold, feedback_sink=feedback, history=history, identity=identity).run(
         host="127.0.0.1", port=int(os.getenv("PORT", "8000")), debug=False)
 
 
