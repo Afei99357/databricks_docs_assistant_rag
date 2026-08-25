@@ -1,0 +1,39 @@
+-- Substitute ${catalog}, ${schema}, and ${artifact_volume} in the execution layer.
+CREATE SCHEMA IF NOT EXISTS ${catalog}.${schema};
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_documents (
+  doc_id STRING NOT NULL, requested_url STRING NOT NULL, canonical_url STRING NOT NULL,
+  resolved_url STRING, title STRING, category STRING NOT NULL, source_last_updated STRING,
+  source_content_hash STRING, document_version STRING, status STRING NOT NULL,
+  http_status INT, error_message STRING, consecutive_404_count INT NOT NULL,
+  retrieved_at TIMESTAMP, last_success_at TIMESTAMP, last_run_at TIMESTAMP, removed_at TIMESTAMP
+) USING DELTA;
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_chunks (
+  chunk_id STRING NOT NULL, doc_id STRING NOT NULL, document_version STRING NOT NULL,
+  position INT NOT NULL, chunk_text STRING NOT NULL, heading_path ARRAY<STRING>,
+  source_url STRING NOT NULL, source_title STRING NOT NULL, embedding_model STRING,
+  embedding_dimension INT, embedding_created_at TIMESTAMP
+) USING DELTA;
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_index_snapshots (
+  snapshot_id STRING NOT NULL, embedding_model STRING NOT NULL, embedding_dimension INT NOT NULL,
+  chunk_count BIGINT NOT NULL, artifact_path STRING NOT NULL, chunk_map_path STRING NOT NULL,
+  source_snapshot_at TIMESTAMP, created_at TIMESTAMP NOT NULL, status STRING NOT NULL,
+  active BOOLEAN NOT NULL, validation_error STRING
+) USING DELTA;
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_evaluations (
+  evaluation_id STRING NOT NULL, snapshot_id STRING NOT NULL, question STRING NOT NULL,
+  expected_source_url STRING, retrieved_chunk_ids ARRAY<STRING>, recall_at_k DOUBLE,
+  source_correct BOOLEAN, evaluator_notes STRING, created_at TIMESTAMP NOT NULL
+) USING DELTA;
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_feedback (
+  feedback_id STRING NOT NULL, question STRING NOT NULL, submitted_at TIMESTAMP NOT NULL,
+  provider STRING NOT NULL, model STRING, snapshot_id STRING NOT NULL,
+  retrieved_chunk_ids ARRAY<STRING>, latency_ms BIGINT, rating STRING, comment STRING
+) USING DELTA;
+
+CREATE VOLUME IF NOT EXISTS ${catalog}.${schema}.${artifact_volume};
+

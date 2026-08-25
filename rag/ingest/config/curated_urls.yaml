@@ -1,0 +1,90 @@
+# Supplemental official AWS-variant Databricks documentation. Genie-core pages
+# are discovered from https://docs.databricks.com/aws/en/genie/ at run time.
+- category: genie-concepts
+  url: https://docs.databricks.com/aws/en/genie-agents/concepts
+  reason: Core terminology and concepts
+- category: agent-mode
+  url: https://docs.databricks.com/aws/en/genie-agents/talk-to-genie
+  reason: End-user interaction patterns
+- category: unstructured-data-volumes
+  url: https://docs.databricks.com/aws/en/genie-agents/volumes
+  reason: Genie Volume Content Search behavior
+- category: unstructured-data-volumes
+  url: https://docs.databricks.com/aws/en/volumes/content-search
+  reason: Volume Content Search setup, querying, and limitations
+- category: unstructured-data-volumes
+  url: https://docs.databricks.com/aws/en/genie-agents/file-upload
+  reason: Ad hoc file upload behavior
+- category: knowledge-store-instructions
+  url: https://docs.databricks.com/aws/en/genie-agents/best-practices
+  reason: Curation best practices
+- category: benchmarks-evaluation
+  url: https://docs.databricks.com/aws/en/genie-agents/monitor
+  reason: Testing and monitoring Genie
+- category: genie-apis
+  url: https://docs.databricks.com/aws/en/genie-agents/conversation-api
+  reason: Conversation and Management API guide
+- category: genie-apis
+  url: https://docs.databricks.com/api/workspace/genie/startconversation
+  reason: Conversation API reference
+- category: genie-one
+  url: https://docs.databricks.com/aws/en/genie-one/documents
+  reason: Genie documents
+- category: agent-framework
+  url: https://docs.databricks.com/aws/en/generative-ai/agent-framework/build-agents
+  reason: Agent Framework overview
+- category: agent-framework
+  url: https://docs.databricks.com/aws/en/generative-ai/agent-framework/author-agent
+  reason: Authoring custom agents
+- category: agent-framework
+  url: https://docs.databricks.com/aws/en/generative-ai/agent-framework/unstructured-retrieval-tools
+  reason: Unstructured retrieval tools
+- category: managed-mcp
+  url: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
+  reason: Managed MCP overview
+- category: managed-mcp
+  url: https://docs.databricks.com/aws/en/agents/mcp-tools/genie-mcp
+  reason: Genie MCP server
+- category: managed-mcp
+  url: https://docs.databricks.com/aws/en/agents/mcp-tools/connect-clients
+  reason: Connect MCP clients
+- category: multi-agent-apps
+  url: https://docs.databricks.com/aws/en/agents/custom-agents/multi-agent-apps
+  reason: Multi-agent applications
+- category: multi-agent-apps
+  url: https://docs.databricks.com/aws/en/generative-ai/agent-bricks/multi-agent-supervisor
+  reason: Multi-agent supervisor
+- category: uc-permissions-security
+  url: https://docs.databricks.com/aws/en/data-governance/unity-catalog/access-control/
+  reason: Unity Catalog access control
+- category: uc-permissions-security
+  url: https://docs.databricks.com/aws/en/data-governance/unity-catalog/access-control/privileges-reference
+  reason: Unity Catalog privilege reference
+- category: databricks-apps
+  url: https://docs.databricks.com/aws/en/dev-tools/databricks-apps/genie
+  reason: Genie in Databricks Apps
+- category: databricks-apps
+  url: https://docs.databricks.com/aws/en/genie-agents/embed
+  reason: Embedding Genie
+- category: genie-one
+  url: https://docs.databricks.com/aws/en/genie-one/mobile-admin
+  reason: Genie mobile administration
+- category: genie-apis
+  url: https://docs.databricks.com/api/workspace/genie/createspace
+  reason: Space CRUD API reference
+- category: genie-apis
+  url: https://docs.databricks.com/aws/en/dev-tools/cli/reference/genie-commands
+  reason: Databricks CLI Genie commands
+- category: genie-code
+  url: https://docs.databricks.com/aws/en/genie-code/mcp
+  reason: Genie Code MCP
+- category: genie-code
+  url: https://docs.databricks.com/aws/en/genie-code/github-mcp
+  reason: Genie Code GitHub MCP
+- category: genie-code
+  url: https://docs.databricks.com/aws/en/genie-code/full-page
+  reason: Full-page Genie Code mode
+- category: genie-code
+  url: https://docs.databricks.com/aws/en/genie-code/tips
+  reason: Genie Code tips
+

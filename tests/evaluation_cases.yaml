@@ -1,0 +1,51 @@
+- question: What are the key Genie Agent concepts?
+  expected_source_url: https://docs.databricks.com/aws/en/genie-agents/concepts
+- question: How do users ask Genie questions?
+  expected_source_url: https://docs.databricks.com/aws/en/genie-agents/talk-to-genie
+- question: How does Genie search Volume files?
+  expected_source_url: https://docs.databricks.com/aws/en/genie-agents/volumes
+- question: What are Volume Content Search limitations?
+  expected_source_url: https://docs.databricks.com/aws/en/volumes/content-search
+- question: How does Genie file upload work?
+  expected_source_url: https://docs.databricks.com/aws/en/genie-agents/file-upload
+- question: What are Genie best practices?
+  expected_source_url: https://docs.databricks.com/aws/en/genie-agents/best-practices
+- question: How do I monitor a Genie Agent?
+  expected_source_url: https://docs.databricks.com/aws/en/genie-agents/monitor
+- question: What is the Genie conversation API?
+  expected_source_url: https://docs.databricks.com/aws/en/genie-agents/conversation-api
+- question: How do I start a Genie conversation by API?
+  expected_source_url: https://docs.databricks.com/api/workspace/genie/startconversation
+- question: How do Genie One documents work?
+  expected_source_url: https://docs.databricks.com/aws/en/genie-one/documents
+- question: How can I build agents with Agent Framework?
+  expected_source_url: https://docs.databricks.com/aws/en/generative-ai/agent-framework/build-agents
+- question: How do I author a custom agent?
+  expected_source_url: https://docs.databricks.com/aws/en/generative-ai/agent-framework/author-agent
+- question: What are unstructured retrieval tools?
+  expected_source_url: https://docs.databricks.com/aws/en/generative-ai/agent-framework/unstructured-retrieval-tools
+- question: What is managed MCP?
+  expected_source_url: https://docs.databricks.com/aws/en/generative-ai/mcp/managed-mcp
+- question: How does the Genie MCP server work?
+  expected_source_url: https://docs.databricks.com/aws/en/agents/mcp-tools/genie-mcp
+- question: How do I connect MCP clients?
+  expected_source_url: https://docs.databricks.com/aws/en/agents/mcp-tools/connect-clients
+- question: What are multi-agent applications?
+  expected_source_url: https://docs.databricks.com/aws/en/agents/custom-agents/multi-agent-apps
+- question: What is the multi-agent supervisor pattern?
+  expected_source_url: https://docs.databricks.com/aws/en/generative-ai/agent-bricks/multi-agent-supervisor
+- question: How does Unity Catalog access control work?
+  expected_source_url: https://docs.databricks.com/aws/en/data-governance/unity-catalog/access-control
+- question: Which Unity Catalog privileges are available?
+  expected_source_url: https://docs.databricks.com/aws/en/data-governance/unity-catalog/access-control/privileges-reference
+- question: How do I use Genie in a Databricks App?
+  expected_source_url: https://docs.databricks.com/aws/en/dev-tools/databricks-apps/genie
+- question: How do I embed Genie?
+  expected_source_url: https://docs.databricks.com/aws/en/genie-agents/embed
+- question: How is Genie mobile administered?
+  expected_source_url: https://docs.databricks.com/aws/en/genie-one/mobile-admin
+- question: How do I create a Genie space?
+  expected_source_url: https://docs.databricks.com/api/workspace/genie/createspace
+- question: How do I use Genie CLI commands?
+  expected_source_url: https://docs.databricks.com/aws/en/dev-tools/cli/reference/genie-commands
+
