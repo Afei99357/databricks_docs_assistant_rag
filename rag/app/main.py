@@ -14,7 +14,7 @@ from rag.config import Settings
 from rag.history import ConversationRepository
 from rag.identity import DatabricksAppIdentityProvider
 from rag.index.embeddings import DatabricksEmbeddingProvider
-from rag.index.runtime import ActiveSnapshotRetriever
+from rag.index.runtime import VolumeSnapshotRetriever
 from rag.llm.providers import DatabricksEndpointProvider
 from rag.store import DatabricksFeedbackSink, DatabricksStore
 
@@ -30,7 +30,7 @@ def create_databricks_app():
     # Databricks-Qwen namespace.
     artifact_root = os.getenv("RAG_APP_INDEX_ROOT") or f"{artifact_volume.rstrip('/')}/app-qwen3-embedding-0-6b"
     embedder = DatabricksEmbeddingProvider(embedding_endpoint)
-    retriever = ActiveSnapshotRetriever(artifact_root, embedder, settings.top_k)
+    retriever = VolumeSnapshotRetriever(artifact_root, embedder, settings.top_k)
     provider = DatabricksEndpointProvider(settings.databricks_chat_endpoint)
     store = DatabricksStore(settings.warehouse_id)
     feedback = DatabricksFeedbackSink(
