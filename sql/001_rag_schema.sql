@@ -35,5 +35,23 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_feedback (
   retrieved_chunk_ids ARRAY<STRING>, latency_ms BIGINT, rating STRING, comment STRING
 ) USING DELTA;
 
-CREATE VOLUME IF NOT EXISTS ${catalog}.${schema}.${artifact_volume};
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_conversations (
+  conversation_id STRING NOT NULL, owner_user_id STRING NOT NULL, title STRING NOT NULL,
+  status STRING NOT NULL, created_at TIMESTAMP NOT NULL, updated_at TIMESTAMP NOT NULL,
+  archived_at TIMESTAMP, deleted_at TIMESTAMP
+) USING DELTA;
 
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_conversation_turns (
+  turn_id STRING NOT NULL, conversation_id STRING NOT NULL, turn_number INT NOT NULL,
+  user_question STRING NOT NULL, resolved_query STRING NOT NULL, answer_text STRING NOT NULL,
+  supported BOOLEAN NOT NULL, provider STRING NOT NULL, model STRING, snapshot_id STRING NOT NULL,
+  citation_chunk_ids ARRAY<STRING>, created_at TIMESTAMP NOT NULL, latency_ms BIGINT
+) USING DELTA;
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_retrieval_traces (
+  trace_id STRING NOT NULL, turn_id STRING NOT NULL, search_number INT NOT NULL,
+  search_query STRING NOT NULL, retrieved_chunk_ids ARRAY<STRING>, selected_chunk_ids ARRAY<STRING>,
+  agent_decision STRING NOT NULL, created_at TIMESTAMP NOT NULL, latency_ms BIGINT
+) USING DELTA;
+
+CREATE VOLUME IF NOT EXISTS ${catalog}.${schema}.${artifact_volume};
