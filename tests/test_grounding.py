@@ -15,7 +15,7 @@ def _result(score=0.9):
 
 
 def test_grounded_answer_keeps_only_cited_sources():
-    answer = answer_groundedly("What is Genie?", [_result()], FakeProvider(["S1,S1,S1,S1", "Genie is documented [S1]."]), threshold=0.3)
+    answer = answer_groundedly("What is Genie?", [_result()], FakeProvider(["S1,S1,S1,S1,S1", "Genie is documented [S1]."]), threshold=0.3)
     assert answer.supported
     assert answer.citations[0].url.startswith("https://docs.databricks.com")
     assert "[S1]" in build_prompt("What?", [_result()])
@@ -28,5 +28,5 @@ def test_low_relevance_refuses_without_calling_provider():
 
 
 def test_invalid_evidence_selection_falls_back_to_top_candidates():
-    results = [_result() for _ in range(6)]
-    assert len(select_evidence("question", results, FakeProvider("not labels"))) == 6
+    results = [_result() for _ in range(10)]
+    assert len(select_evidence("question", results, FakeProvider("not labels"))) == 10
