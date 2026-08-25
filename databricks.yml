@@ -1,0 +1,27 @@
+bundle:
+  name: databricks-docs-rag
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    default: eliao
+  schema:
+    default: genie_kb
+  artifact_volume:
+    default: rag_artifacts
+  warehouse_id:
+    description: SQL warehouse used for Delta history and feedback.
+    default: ""
+  embedding_endpoint:
+    default: databricks-qwen3-embedding-0-6b
+  reasoning_endpoint:
+    default: databricks-gpt-oss-20b
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}

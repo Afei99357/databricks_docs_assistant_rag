@@ -12,6 +12,7 @@ dependencies = [
   "databricks-sdk>=0.50",
   "faiss-cpu>=1.8",
   "Flask>=3.0",
+  "gunicorn>=23.0",
   "lxml>=5.0",
   "PyYAML>=6.0",
   "requests>=2.31",

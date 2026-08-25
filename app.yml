@@ -1,0 +1,27 @@
+command:
+  ["bash", "-c", "exec gunicorn -w 2 -t 300 -b 0.0.0.0:${DATABRICKS_APP_PORT:-${PORT:-8000}} rag.app.main:app"]
+
+# Resource values are injected by the Databricks Apps runtime. Catalog/schema
+# are deliberately non-secret deployment settings; update them when deploying
+# this bundle to a different environment.
+env:
+  - name: RAG_CATALOG
+    value: eliao
+  - name: RAG_SCHEMA
+    value: genie_kb
+  - name: RAG_ARTIFACT_VOLUME
+    value: rag_artifacts
+  - name: RAG_RETRIEVAL_TOP_K
+    value: "25"
+  - name: RAG_RELEVANCE_THRESHOLD
+    value: "0.35"
+  - name: RAG_WAREHOUSE_ID
+    valueFrom: rag_sql_warehouse
+  - name: RAG_ARTIFACT_ROOT
+    valueFrom: rag_artifacts_volume
+  # The runtime derives a separate app-qwen3-embedding-0-6b directory below
+  # this Volume; it never reads the local/Ollama active snapshot.
+  - name: RAG_DATABRICKS_EMBEDDING_ENDPOINT
+    valueFrom: qwen_embedding
+  - name: DATABRICKS_CHAT_ENDPOINT
+    valueFrom: gpt_oss_reasoning

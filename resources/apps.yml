@@ -1,0 +1,54 @@
+resources:
+  apps:
+    databricks_docs_rag:
+      name: databricks-docs-rag-${bundle.target}
+      description: Grounded assistant over official Databricks documentation.
+      # This file lives in resources/; deploy the repository root, which
+      # contains app.yml, pyproject.toml, and the rag package.
+      source_code_path: ..
+      # No explicit user scopes: Apps supplies the minimum identity scopes
+      # needed for the OBO current-user lookup, and the app never reads data
+      # with the caller's token.
+      resources:
+        - name: rag_sql_warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+        - name: rag_artifacts_volume
+          uc_securable:
+            securable_full_name: ${var.catalog}.${var.schema}.${var.artifact_volume}
+            securable_type: VOLUME
+            permission: READ_VOLUME
+        - name: rag_feedback
+          uc_securable:
+            securable_full_name: ${var.catalog}.${var.schema}.rag_feedback
+            securable_type: TABLE
+            permission: MODIFY
+        - name: rag_conversations
+          uc_securable:
+            securable_full_name: ${var.catalog}.${var.schema}.rag_conversations
+            securable_type: TABLE
+            permission: MODIFY
+        - name: rag_conversations_read
+          uc_securable:
+            securable_full_name: ${var.catalog}.${var.schema}.rag_conversations
+            securable_type: TABLE
+            permission: SELECT
+        - name: rag_conversation_turns
+          uc_securable:
+            securable_full_name: ${var.catalog}.${var.schema}.rag_conversation_turns
+            securable_type: TABLE
+            permission: MODIFY
+        - name: rag_conversation_turns_read
+          uc_securable:
+            securable_full_name: ${var.catalog}.${var.schema}.rag_conversation_turns
+            securable_type: TABLE
+            permission: SELECT
+        - name: qwen_embedding
+          serving_endpoint:
+            name: ${var.embedding_endpoint}
+            permission: CAN_QUERY
+        - name: gpt_oss_reasoning
+          serving_endpoint:
+            name: ${var.reasoning_endpoint}
+            permission: CAN_QUERY

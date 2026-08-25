@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict
 from time import perf_counter
-from typing import Callable
 
 from flask import Flask, jsonify, render_template, request
 
+from rag.conversation import resolve_follow_up
 from rag.llm.grounding import answer_groundedly
 from rag.models import RetrievalResult
-from rag.conversation import resolve_follow_up
 
 STARTER_QUESTIONS = [
     "What is Volume Content Search and what are its limitations?",
@@ -23,9 +23,30 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
     app = Flask(__name__)
     app.config["STARTER_QUESTIONS"] = STARTER_QUESTIONS
 
+    @app.errorhandler(PermissionError)
+    def forbidden(error):
+        return jsonify({"error": str(error) or "You are not authorized to use this application."}), 403
+
+    @app.errorhandler(RuntimeError)
+    def runtime_error(error):
+        # OBO failures are user-facing authorization errors. Other runtime
+        # failures still return a concise API response instead of Flask HTML.
+        from rag.app.auth import MissingForwardedTokenError
+        status = 401 if isinstance(error, MissingForwardedTokenError) else 500
+        return jsonify({"error": str(error) or "The service could not process this request."}), status
+
+    @app.errorhandler(Exception)
+    def unexpected_error(error):
+        app.logger.exception("unexpected API error", exc_info=error)
+        return jsonify({"error": "The service could not process this request."}), 500
+
     @app.get("/")
     def home():
         return render_template("index.html", starter_questions=STARTER_QUESTIONS)
+
+    @app.get("/healthz")
+    def healthz():
+        return jsonify({"status": "ok"})
 
     @app.get("/api/conversations")
     def conversations():
