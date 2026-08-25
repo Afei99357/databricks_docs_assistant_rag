@@ -22,7 +22,12 @@ from rag.ingest.sources import (
 )
 from rag.llm.providers import DatabricksEndpointProvider, OllamaProvider
 from rag.store import DatabricksFeedbackSink, DatabricksStore
-from rag.workflow import load_current_chunks, publish_volume_snapshot
+from rag.workflow import (
+    build_snapshot,
+    load_current_chunks,
+    publish_volume_snapshot,
+    refresh_sources,
+)
 
 
 def discover() -> None:
@@ -110,6 +115,28 @@ def build_app_snapshot() -> None:
     )
 
 
+def build_local_snapshot() -> None:
+    """Refresh governed chunks and build a local Ollama-backed FAISS snapshot."""
+    settings = Settings.from_env()
+    root = os.getenv("RAG_LOCAL_INDEX_DIR")
+    if not root:
+        raise ValueError("RAG_LOCAL_INDEX_DIR must point to the local snapshot directory")
+    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
+    chunks = refresh_sources(
+        store,
+        document_table=f"{settings.namespace}.rag_documents",
+        chunk_table=f"{settings.namespace}.rag_chunks",
+    )
+    if not chunks:
+        raise RuntimeError("source refresh produced no chunks")
+    embedder = OllamaEmbeddingProvider(settings.embedding_model)
+    published = build_snapshot(chunks, embedder, root)
+    print(
+        f"published local snapshot {published.metadata.snapshot_id} "
+        f"({published.metadata.chunk_count} chunks)"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Custom Databricks Docs RAG operations")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -120,12 +147,17 @@ def main() -> None:
         "build-app-snapshot",
         help="build and activate a Databricks-embedding snapshot in the artifact Volume",
     )
+    commands.add_parser(
+        "build-local-snapshot",
+        help="refresh sources and build an Ollama-embedding local FAISS snapshot",
+    )
     args = parser.parse_args()
     {
         "discover": discover,
         "setup-db": setup_db,
         "serve": serve,
         "build-app-snapshot": build_app_snapshot,
+        "build-local-snapshot": build_local_snapshot,
     }[args.command]()
 
 
