@@ -122,6 +122,7 @@ def build_local_snapshot() -> None:
     if not root:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to the local snapshot directory")
     store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
+    print("refreshing configured sources and chunks...", flush=True)
     chunks = refresh_sources(
         store,
         document_table=f"{settings.namespace}.rag_documents",
@@ -129,6 +130,7 @@ def build_local_snapshot() -> None:
     )
     if not chunks:
         raise RuntimeError("source refresh produced no chunks")
+    print(f"building local FAISS snapshot from {len(chunks)} chunks...", flush=True)
     embedder = OllamaEmbeddingProvider(settings.embedding_model)
     published = build_snapshot(chunks, embedder, root)
     print(
