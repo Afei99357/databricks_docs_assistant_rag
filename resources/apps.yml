@@ -3,7 +3,9 @@ resources:
     databricks_docs_rag:
       name: databricks-docs-rag-${bundle.target}
       description: Grounded assistant over official Databricks documentation.
-      source_code_path: .
+      # This file lives in resources/; deploy the repository root, which
+      # contains app.yml, pyproject.toml, and the rag package.
+      source_code_path: ..
       # No explicit user scopes: Apps supplies the minimum identity scopes
       # needed for the OBO current-user lookup, and the app never reads data
       # with the caller's token.
