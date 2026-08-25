@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 
 from rag.llm.providers import AnswerProvider
 from rag.models import Answer, Citation, RetrievalResult
@@ -31,4 +32,8 @@ def answer_groundedly(question: str, results: list[RetrievalResult], provider: A
     labels = set(LABEL.findall(text))
     if not labels:
         return Answer("I could not verify this from the indexed documentation.", citations, False, provider.name, snapshot_id)
-    return Answer(text, tuple(citation for citation in citations if citation.label in labels), True, provider.name, snapshot_id)
+    cited = tuple(citation for citation in citations if citation.label in labels)
+    renumbered = {citation.label: f"S{index}" for index, citation in enumerate(cited, 1)}
+    text = LABEL.sub(lambda match: f"[{renumbered.get(match.group(1), match.group(1))}]", text)
+    citations = tuple(replace(citation, label=renumbered[citation.label]) for citation in cited)
+    return Answer(text, citations, True, provider.name, snapshot_id)
