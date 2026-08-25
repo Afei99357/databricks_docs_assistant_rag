@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Protocol, Sequence
+from collections.abc import Sequence
+from typing import Protocol
 
 import requests
+from databricks.sdk import WorkspaceClient
 
 
 class EmbeddingProvider(Protocol):
@@ -53,4 +55,20 @@ class OllamaEmbeddingProvider:
             response.raise_for_status()
             values.extend(response.json()["embeddings"])
         if values: self.dimension = len(values[0])
+        return values
+
+
+class DatabricksEmbeddingProvider:
+    """Embedding adapter for a Databricks Model Serving endpoint."""
+    def __init__(self, endpoint: str, *, profile: str | None = None):
+        self.model_name, self.profile, self.dimension = endpoint, profile, 0
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        client = WorkspaceClient(profile=self.profile) if self.profile else WorkspaceClient()
+        response = client.serving_endpoints.query(name=self.model_name, input=list(texts))
+        values = [list(item.embedding) for item in response.data or []]
+        if len(values) != len(texts):
+            raise RuntimeError("Databricks embedding endpoint returned an unexpected number of vectors")
+        if values:
+            self.dimension = len(values[0])
         return values

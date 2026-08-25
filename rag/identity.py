@@ -15,9 +15,11 @@ class LocalTestIdentityProvider:
 
 
 class DatabricksAppIdentityProvider:
-    """Placeholder for the App-auth implementation; never falls back to request JSON."""
+    """Resolve a real Databricks App caller from the forwarded OBO token."""
     def current_user_id(self, request) -> str:
-        user_id = request.headers.get("X-Forwarded-User")
+        from rag.app.auth import get_user_workspace_client
+        user = get_user_workspace_client(request.headers).current_user.me()
+        user_id = getattr(user, "user_name", None) or getattr(user, "id", None)
         if not user_id:
-            raise PermissionError("authenticated Databricks App user identity is required")
-        return user_id
+            raise PermissionError("Databricks App caller identity is unavailable")
+        return str(user_id)

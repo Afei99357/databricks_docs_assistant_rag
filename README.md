@@ -12,6 +12,24 @@ chunking, local Qwen embedding adapters, FAISS snapshot validation/activation, r
 evaluation, a grounded Flask UI, and a Databricks feedback sink. No real workspace values or
 credentials belong in this repository.
 
+## Databricks App mode
+
+The same Flask application can run as a Databricks App. It uses the App service principal
+for the shared FAISS snapshot in the artifact Volume, Delta conversation history/feedback,
+and model inference. It uses the forwarded user token only to derive a trusted history owner;
+no browser-supplied user ID is accepted.
+
+- embeddings: `databricks-qwen3-embedding-0-6b`
+- retrieval reasoning and answer generation: `databricks-gpt-oss-20b`
+- local `rag serve` remains Ollama-based and is unaffected.
+
+Before deploying, build and publish a separate snapshot with the Databricks Qwen embedding
+endpoint. A FAISS index built with the local Ollama model cannot be queried with a different
+embedding model. Set the bundle's `warehouse_id` variable, then run
+`databricks bundle validate` and deploy from the `databricks-app` branch. The bundle requests
+least-privilege access to the artifact Volume, history/feedback tables, SQL warehouse, and the
+two model endpoints.
+
 ## Local setup
 
 1. Create and activate a virtual environment.
