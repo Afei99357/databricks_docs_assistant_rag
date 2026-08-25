@@ -54,11 +54,11 @@ Official documentation excerpts:
 
 def answer_groundedly(question: str, results: list[RetrievalResult], provider: AnswerProvider, *, threshold: float) -> Answer:
     snapshot_id = results[0].snapshot_id if results else "none"
-    citations = tuple(Citation(f"S{i}", result.chunk.source_title, result.chunk.source_url, result.chunk.text[:500], result.chunk.chunk_id) for i, result in enumerate(results, 1))
+    citations = tuple(Citation(f"S{i}", result.chunk.source_title, result.chunk.source_url, result.chunk.text, result.chunk.chunk_id) for i, result in enumerate(results, 1))
     if not results or results[0].score < threshold:
         return Answer("I could not verify this from the indexed official documentation.", citations, False, provider.name, snapshot_id)
     evidence = select_evidence(question, results, provider)
-    citations = tuple(Citation(f"S{i}", item.chunk.source_title, item.chunk.source_url, item.chunk.text[:500], item.chunk.chunk_id) for i, item in enumerate(evidence, 1))
+    citations = tuple(Citation(f"S{i}", item.chunk.source_title, item.chunk.source_url, item.chunk.text, item.chunk.chunk_id) for i, item in enumerate(evidence, 1))
     text = provider.complete(build_prompt(question, evidence))
     labels = set(LABEL.findall(text))
     if not labels:
