@@ -61,7 +61,7 @@ def serve() -> None:
     root = os.getenv("RAG_LOCAL_INDEX_DIR")
     if not root:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to downloaded local snapshot artifacts")
-    embedder = OllamaEmbeddingProvider(settings.embedding_model)
+    embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.ollama_base_url)
     retriever = ActiveSnapshotRetriever(root, embedder, settings.top_k)
     provider = (
         OllamaProvider(settings.ollama_base_url, settings.ollama_model)
@@ -131,7 +131,7 @@ def build_local_snapshot() -> None:
     if not chunks:
         raise RuntimeError("source refresh produced no chunks")
     print(f"building local FAISS snapshot from {len(chunks)} chunks...", flush=True)
-    embedder = OllamaEmbeddingProvider(settings.embedding_model)
+    embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.ollama_base_url)
     published = build_snapshot(chunks, embedder, root)
     print(
         f"published local snapshot {published.metadata.snapshot_id} "
