@@ -5,11 +5,11 @@ import json
 import tempfile
 from pathlib import Path
 
+from rag.index.chunking import chunk_document
+from rag.index.service import PublishedSnapshot, build_and_activate
 from rag.ingest.fetch import fetch_page
 from rag.ingest.pipeline import IngestedDocument, ingest_source
 from rag.ingest.sources import GENIE_LANDING_URL, CuratedDoc, discover_genie_core, load_curated_docs
-from rag.index.chunking import chunk_document
-from rag.index.service import PublishedSnapshot, build_and_activate
 from rag.models import Chunk
 from rag.store import DatabricksStore, sql_literal
 

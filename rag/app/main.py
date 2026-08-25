@@ -21,10 +21,14 @@ from rag.store import DatabricksFeedbackSink, DatabricksStore
 
 def create_databricks_app():
     settings = Settings.from_env()
-    artifact_root = os.getenv("RAG_ARTIFACT_ROOT")
-    if not artifact_root:
+    artifact_volume = os.getenv("RAG_ARTIFACT_ROOT")
+    if not artifact_volume:
         raise RuntimeError("RAG_ARTIFACT_ROOT must be supplied by the Databricks App volume resource.")
     embedding_endpoint = os.getenv("RAG_DATABRICKS_EMBEDDING_ENDPOINT", "databricks-qwen3-embedding-0-6b")
+    # Never share an active manifest across embedding spaces. Local Ollama
+    # snapshots can remain in the Volume root while this App reads only its
+    # Databricks-Qwen namespace.
+    artifact_root = os.getenv("RAG_APP_INDEX_ROOT") or f"{artifact_volume.rstrip('/')}/app-qwen3-embedding-0-6b"
     embedder = DatabricksEmbeddingProvider(embedding_endpoint)
     retriever = ActiveSnapshotRetriever(artifact_root, embedder, settings.top_k)
     provider = DatabricksEndpointProvider(settings.databricks_chat_endpoint)

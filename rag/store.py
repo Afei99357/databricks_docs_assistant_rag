@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from databricks.sdk import WorkspaceClient
+
 from rag.models import Chunk, Document
 
 

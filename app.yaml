@@ -19,6 +19,8 @@ env:
     valueFrom: rag_sql_warehouse
   - name: RAG_ARTIFACT_ROOT
     valueFrom: rag_artifacts_volume
+  # The runtime derives a separate app-qwen3-embedding-0-6b directory below
+  # this Volume; it never reads the local/Ollama active snapshot.
   - name: RAG_DATABRICKS_EMBEDDING_ENDPOINT
     valueFrom: qwen_embedding
   - name: DATABRICKS_CHAT_ENDPOINT

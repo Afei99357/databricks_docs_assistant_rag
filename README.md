@@ -24,8 +24,9 @@ no browser-supplied user ID is accepted.
 - local `rag serve` remains Ollama-based and is unaffected.
 
 Before deploying, build and publish a separate snapshot with the Databricks Qwen embedding
-endpoint. A FAISS index built with the local Ollama model cannot be queried with a different
-embedding model. Set the bundle's `warehouse_id` variable, then run
+endpoint. It is stored under `rag_artifacts/app-qwen3-embedding-0-6b/`, separately from any
+local/Ollama artifact. A FAISS index built with the local Ollama model cannot be queried with a
+different embedding model. Set the bundle's `warehouse_id` variable, then run
 `databricks bundle validate` and deploy from the `databricks-app` branch. The bundle requests
 least-privilege access to the artifact Volume, history/feedback tables, SQL warehouse, and the
 two model endpoints.

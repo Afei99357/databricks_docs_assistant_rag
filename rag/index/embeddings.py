@@ -60,13 +60,19 @@ class OllamaEmbeddingProvider:
 
 class DatabricksEmbeddingProvider:
     """Embedding adapter for a Databricks Model Serving endpoint."""
-    def __init__(self, endpoint: str, *, profile: str | None = None):
-        self.model_name, self.profile, self.dimension = endpoint, profile, 0
+    def __init__(self, endpoint: str, *, profile: str | None = None, batch_size: int = 100):
+        if not 1 <= batch_size <= 150:
+            raise ValueError("Databricks embedding batch_size must be between 1 and 150")
+        self.model_name, self.profile, self.batch_size, self.dimension = endpoint, profile, batch_size, 0
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         client = WorkspaceClient(profile=self.profile) if self.profile else WorkspaceClient()
-        response = client.serving_endpoints.query(name=self.model_name, input=list(texts))
-        values = [list(item.embedding) for item in response.data or []]
+        values: list[list[float]] = []
+        for start in range(0, len(texts), self.batch_size):
+            response = client.serving_endpoints.query(
+                name=self.model_name, input=list(texts[start:start + self.batch_size]),
+            )
+            values.extend(list(item.embedding) for item in response.data or [])
         if len(values) != len(texts):
             raise RuntimeError("Databricks embedding endpoint returned an unexpected number of vectors")
         if values:

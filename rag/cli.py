@@ -9,10 +9,10 @@ from rag.agent.retrieval import RetrievalAgent
 from rag.config import Settings
 from rag.history import ConversationRepository
 from rag.identity import LocalTestIdentityProvider
-from rag.ingest.fetch import fetch_page
-from rag.ingest.sources import GENIE_LANDING_URL, discover_genie_core, load_curated_docs
 from rag.index.embeddings import OllamaEmbeddingProvider
 from rag.index.runtime import ActiveSnapshotRetriever
+from rag.ingest.fetch import fetch_page
+from rag.ingest.sources import GENIE_LANDING_URL, discover_genie_core, load_curated_docs
 from rag.llm.providers import DatabricksEndpointProvider, OllamaProvider
 from rag.store import DatabricksFeedbackSink, DatabricksStore
 from rag.workflow import load_current_chunks, publish_volume_snapshot
@@ -67,8 +67,9 @@ def build_app_snapshot() -> None:
         profile=settings.databricks_profile,
     )
     chunks = load_current_chunks(store, f"{settings.namespace}.rag_chunks")
+    app_index_root = os.getenv("RAG_APP_INDEX_ROOT") or f"{settings.volume_path}/app-qwen3-embedding-0-6b"
     published = publish_volume_snapshot(
-        store, namespace=settings.namespace, volume_path=settings.volume_path, chunks=chunks, embedder=embedder,
+        store, namespace=settings.namespace, volume_path=app_index_root, chunks=chunks, embedder=embedder,
     )
     print(f"published App snapshot {published.metadata.snapshot_id} ({published.metadata.chunk_count} chunks)")
 
