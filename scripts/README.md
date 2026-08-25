@@ -29,5 +29,16 @@ Validate the declarative bundle before deployment:
 databricks bundle validate --target dev --var warehouse_id=<sql-warehouse-id>
 ```
 
+With the workspace profile and standard RAG environment values loaded, build and activate the
+App-compatible snapshot with:
+
+```bash
+python -m rag.cli build-app-snapshot
+```
+
+The command reads `rag_chunks`, creates a fresh immutable `snapshots/<id>/index.faiss` and
+`chunk_map.json` in the artifact Volume, and uploads `active_snapshot.json` last. It does not
+delete old snapshots. It makes embedding calls and writes to the existing artifact Volume.
+
 The resulting App has one service principal for shared reads/writes. User OBO is used only to
 look up the authenticated caller and enforce per-user conversation-history ownership.

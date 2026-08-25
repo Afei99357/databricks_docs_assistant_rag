@@ -15,6 +15,7 @@ from rag.index.embeddings import OllamaEmbeddingProvider
 from rag.index.runtime import ActiveSnapshotRetriever
 from rag.llm.providers import DatabricksEndpointProvider, OllamaProvider
 from rag.store import DatabricksFeedbackSink, DatabricksStore
+from rag.workflow import load_current_chunks, publish_volume_snapshot
 
 
 def discover() -> None:
@@ -56,14 +57,32 @@ def serve() -> None:
         host="127.0.0.1", port=int(os.getenv("PORT", "8000")), debug=False)
 
 
+def build_app_snapshot() -> None:
+    """Build the App-compatible FAISS snapshot with Databricks Qwen embeddings."""
+    settings = Settings.from_env()
+    from rag.index.embeddings import DatabricksEmbeddingProvider
+    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
+    embedder = DatabricksEmbeddingProvider(
+        os.getenv("RAG_DATABRICKS_EMBEDDING_ENDPOINT", "databricks-qwen3-embedding-0-6b"),
+        profile=settings.databricks_profile,
+    )
+    chunks = load_current_chunks(store, f"{settings.namespace}.rag_chunks")
+    published = publish_volume_snapshot(
+        store, namespace=settings.namespace, volume_path=settings.volume_path, chunks=chunks, embedder=embedder,
+    )
+    print(f"published App snapshot {published.metadata.snapshot_id} ({published.metadata.chunk_count} chunks)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Custom Databricks Docs RAG operations")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("discover", help="fetch and list official source URLs")
     commands.add_parser("setup-db", help="create configured Delta tables and artifact Volume")
     commands.add_parser("serve", help="serve the active local snapshot through Flask")
+    commands.add_parser("build-app-snapshot", help="build and activate a Databricks-embedding snapshot in the artifact Volume")
     args = parser.parse_args()
-    {"discover": discover, "setup-db": setup_db, "serve": serve}[args.command]()
+    {"discover": discover, "setup-db": setup_db, "serve": serve,
+     "build-app-snapshot": build_app_snapshot}[args.command]()
 
 
 if __name__ == "__main__":

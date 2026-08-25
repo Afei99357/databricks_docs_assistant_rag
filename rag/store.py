@@ -39,9 +39,9 @@ class DatabricksStore:
         for statement in (item.strip() for item in sql.split(";") if item.strip()):
             self.execute(statement)
 
-    def upload(self, local_path: str | Path, volume_path: str) -> None:
+    def upload(self, local_path: str | Path, volume_path: str, *, overwrite: bool = False) -> None:
         with Path(local_path).open("rb") as handle:
-            self.workspace.files.upload(volume_path, handle, overwrite=False)
+            self.workspace.files.upload(volume_path, handle, overwrite=overwrite)
 
     def upsert_document(self, table: str, document: Document) -> None:
         values = {"doc_id": document.doc_id, "requested_url": document.requested_url,
