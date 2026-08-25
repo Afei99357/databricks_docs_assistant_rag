@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
@@ -36,9 +36,15 @@ def clean_text(element: Tag) -> str:
 def _article_root(soup: BeautifulSoup) -> Tag:
     article = soup.find("article")
     root = article.find("div", class_="theme-doc-markdown") if article else None
-    if root is None:
-        raise ExtractionError("no div.theme-doc-markdown found inside article")
-    return root
+    if root is not None:
+        return root
+    # Supplemental documentation sites can use a conventional semantic article
+    # rather than the Docusaurus-specific Databricks container. Keep the
+    # fallback narrow: it must still be an article with an actual page title,
+    # which excludes navigation and page chrome.
+    if article is not None and article.find("h1") is not None:
+        return article
+    raise ExtractionError("no supported article content container found")
 
 
 def _code_text(code: Tag) -> str:
@@ -120,4 +126,3 @@ def extract_content(html: str) -> ExtractedDoc:
     payload = json.dumps(nodes, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return ExtractedDoc(clean_text(title_element), updated["datetime"] if updated else None, nodes,
                         render_markdown(nodes), hashlib.sha256(payload.encode()).hexdigest())
-
