@@ -28,7 +28,7 @@ Question: {question}
 Searches so far: {json.dumps(queries)}
 Evidence:\n{candidates}
 
-First identify every factual aspect the user requested. For comparisons, each named side and each requested difference is a required aspect. You may return {{"action":"answer","selected_chunk_ids":["id"]}} only when the selected chunks directly support every required aspect. Include evidence for every side of a comparison, not just its dominant term. If any aspect lacks direct evidence, return {{"action":"search","query":"precise query for only the missing aspect"}}. Return {{"action":"refuse"}} only if the question cannot be supported. Select 2-10 chunks, preferring a small complete set.'''
+First identify every factual aspect the user requested. For comparisons, each named side and each requested difference is a required aspect. You may return {{"action":"answer","selected_chunk_ids":["id"]}} only when the selected chunks directly support every required aspect. Include evidence for every side of a comparison, not just its dominant term. Exclude chunks that mention a term only in a narrow context (for example, benchmark evaluation, API behavior, or trusted assets) unless the user asked about that context. If any aspect lacks direct evidence, return {{"action":"search","query":"precise query for only the missing aspect"}}. Return {{"action":"refuse"}} only if the question cannot be supported. Select 2-10 chunks, preferring a small complete set.'''
         try:
             response = self.provider.complete(prompt).strip()
             start, end = response.find("{"), response.rfind("}")
