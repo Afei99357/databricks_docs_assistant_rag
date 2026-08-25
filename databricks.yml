@@ -4,6 +4,13 @@ bundle:
 include:
   - resources/*.yml
 
+sync:
+  exclude:
+    - tmp
+    - .env
+    - .venv/**
+    - data/**
+
 variables:
   catalog:
     default: eliao
