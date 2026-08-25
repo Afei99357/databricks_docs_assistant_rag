@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from dataclasses import asdict
 from pathlib import Path
@@ -23,6 +24,26 @@ def _faiss():
 def _chunk_from_dict(value: dict) -> Chunk:
     value["heading_path"] = tuple(value["heading_path"])
     return Chunk(**value)
+
+
+_WORD = re.compile(r"[a-z0-9]+")
+_STOPWORDS = {"a", "an", "and", "are", "as", "at", "be", "difference", "do", "for", "from", "how", "in", "is", "it", "of", "on", "or", "the", "to", "what", "with"}
+
+
+def _terms(text: str) -> set[str]:
+    return {word for word in _WORD.findall(text.lower()) if len(word) > 2 and word not in _STOPWORDS}
+
+
+def _lexical_score(question: str, chunk: Chunk) -> float:
+    """Small exact-term signal to complement semantic similarity."""
+    query_terms = _terms(question)
+    if not query_terms:
+        return 0.0
+    text = f"{chunk.source_title} {chunk.text}".lower()
+    matched = sum(term in text for term in query_terms) / len(query_terms)
+    phrases = [" ".join(pair) for pair in zip(_WORD.findall(question.lower()), _WORD.findall(question.lower())[1:])]
+    phrase_bonus = sum(phrase in text for phrase in phrases) / max(1, len(phrases))
+    return min(1.0, 0.75 * matched + 0.25 * phrase_bonus)
 
 
 class FaissSnapshot:
@@ -76,9 +97,20 @@ class FaissSnapshot:
             raise ValueError("query embedding dimension does not match index")
         import faiss
         faiss.normalize_L2(vector)
-        scores, positions = self.index.search(vector, min(top_k, len(self.chunks)))
-        return [RetrievalResult(self.chunks[position], float(score), self.snapshot_id)
-                for score, position in zip(scores[0], positions[0]) if position >= 0]
+        # Retrieve a broader semantic pool, then blend it with lexical matches
+        # over the immutable chunk map. This preserves semantic recall while
+        # making exact product terminology discoverable.
+        scores, positions = self.index.search(vector, min(max(top_k * 6, 60), len(self.chunks)))
+        semantic = {int(position): float(score) for score, position in zip(scores[0], positions[0]) if position >= 0}
+        lexical = {position: _lexical_score(question, chunk) for position, chunk in enumerate(self.chunks)}
+        candidates = set(semantic) | {position for position, score in lexical.items() if score > 0}
+        ranked = sorted(
+            candidates,
+            key=lambda position: 0.65 * semantic.get(position, 0.0) + 0.35 * lexical[position],
+            reverse=True,
+        )[:top_k]
+        return [RetrievalResult(self.chunks[position], 0.65 * semantic.get(position, 0.0) + 0.35 * lexical[position], self.snapshot_id)
+                for position in ranked]
 
 
 def write_active_manifest(root: str | Path, snapshot_id: str) -> None:
@@ -94,4 +126,3 @@ def write_active_manifest(root: str | Path, snapshot_id: str) -> None:
 def read_active_manifest(root: str | Path) -> str | None:
     path = Path(root) / "active_snapshot.json"
     return json.loads(path.read_text(encoding="utf-8"))["snapshot_id"] if path.exists() else None
-

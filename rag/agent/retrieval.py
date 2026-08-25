@@ -23,12 +23,12 @@ class RetrievalAgent:
 
     def _decide(self, question: str, evidence: list[RetrievalResult], queries: list[str]) -> dict:
         candidates = "\n".join(f"{item.chunk.chunk_id}: {item.chunk.source_title} | {item.chunk.heading_path} | {item.chunk.text[:700]}" for item in evidence)
-        prompt = f'''You are a retrieval planner. Never answer the user. Return JSON only.
+        prompt = f'''You are a retrieval evidence reviewer. Never answer the user. Return JSON only.
 Question: {question}
 Searches so far: {json.dumps(queries)}
 Evidence:\n{candidates}
-Return either {{"action":"search","query":"specific missing aspect"}} or {{"action":"answer","selected_chunk_ids":["id"]}} or {{"action":"refuse"}}.
-Choose only directly relevant evidence. Prefer the smallest sufficient set; normally 2-6, maximum 10.'''
+
+First identify every factual aspect the user requested. For comparisons, each named side and each requested difference is a required aspect. You may return {{"action":"answer","selected_chunk_ids":["id"]}} only when the selected chunks directly support every required aspect. Include evidence for every side of a comparison, not just its dominant term. If any aspect lacks direct evidence, return {{"action":"search","query":"precise query for only the missing aspect"}}. Return {{"action":"refuse"}} only if the question cannot be supported. Select 2-10 chunks, preferring a small complete set.'''
         try:
             response = self.provider.complete(prompt).strip()
             start, end = response.find("{"), response.rfind("}")
