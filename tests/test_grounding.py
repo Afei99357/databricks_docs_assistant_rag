@@ -1,4 +1,4 @@
-from rag.llm.grounding import answer_groundedly, build_prompt, select_evidence
+from rag.llm.grounding import answer_groundedly, build_prompt
 from rag.models import Chunk, RetrievalResult
 
 
@@ -15,7 +15,7 @@ def _result(score=0.9):
 
 
 def test_grounded_answer_keeps_only_cited_sources():
-    answer = answer_groundedly("What is Genie?", [_result()], FakeProvider(["S1,S1,S1,S1,S1", "Genie is documented [S1]."]), threshold=0.3)
+    answer = answer_groundedly("What is Genie?", [_result()], FakeProvider("Genie is documented [S1]."), threshold=0.3)
     assert answer.supported
     assert answer.citations[0].url.startswith("https://docs.databricks.com")
     assert "[S1]" in build_prompt("What?", [_result()])
@@ -25,8 +25,3 @@ def test_low_relevance_refuses_without_calling_provider():
     answer = answer_groundedly("Unknown", [_result(0.1)], FakeProvider("unsafe"), threshold=0.3)
     assert not answer.supported
     assert "could not verify" in answer.text
-
-
-def test_invalid_evidence_selection_falls_back_to_top_candidates():
-    results = [_result() for _ in range(10)]
-    assert len(select_evidence("question", results, FakeProvider("not labels"))) == 10
