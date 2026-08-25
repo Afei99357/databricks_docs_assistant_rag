@@ -48,3 +48,17 @@ def test_conversation_reuses_id_and_rewrites_follow_up():
     assert history.resolved == ["first question", "resolved follow-up"]
     assert client.get("/api/conversations").json["conversations"][0]["conversation_id"] == "c1"
     assert len(client.get("/api/conversations/c1/turns").json["turns"]) == 2
+
+
+def test_unexpected_answer_error_is_json_not_an_html_error_page():
+    class BrokenProvider:
+        name = "broken"; model = "broken"
+        def complete(self, prompt): raise AttributeError("provider failure")
+
+    chunk = Chunk("c", "d", "v", 0, "evidence", (), "https://docs.databricks.com/x", "Docs")
+    app = create_app(
+        retrieve=lambda _: [RetrievalResult(chunk, .9, "s")], provider=BrokenProvider(), threshold=.3,
+    )
+    response = app.test_client().post("/api/answer", json={"question": "test"})
+    assert response.status_code == 500
+    assert response.json == {"error": "The service could not process this request."}

@@ -32,6 +32,10 @@ class DatabricksEndpointProvider:
 
     def complete(self, prompt: str) -> str:
         from databricks.sdk import WorkspaceClient
+        from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
         client = WorkspaceClient(profile=self.profile) if self.profile else WorkspaceClient()
-        response = client.serving_endpoints.query(name=self.model, messages=[{"role": "user", "content": prompt}])
+        response = client.serving_endpoints.query(
+            name=self.model,
+            messages=[ChatMessage(role=ChatMessageRole.USER, content=prompt)],
+        )
         return response.choices[0].message.content.strip()

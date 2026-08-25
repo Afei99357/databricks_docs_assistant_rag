@@ -35,6 +35,11 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         status = 401 if isinstance(error, MissingForwardedTokenError) else 500
         return jsonify({"error": str(error) or "The service could not process this request."}), status
 
+    @app.errorhandler(Exception)
+    def unexpected_error(error):
+        app.logger.exception("unexpected API error", exc_info=error)
+        return jsonify({"error": "The service could not process this request."}), 500
+
     @app.get("/")
     def home():
         return render_template("index.html", starter_questions=STARTER_QUESTIONS)
