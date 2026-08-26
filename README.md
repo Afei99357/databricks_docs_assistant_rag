@@ -96,16 +96,6 @@ Run `uv run python -m rag.cli build-local-snapshot` again whenever you want to r
 configured documentation sources and rebuild the local index. In a new terminal, load `.env`
 again with the three `set -a`/`source`/`set +a` commands above before using the CLI.
 
-### Add a crawlable documentation site
-
-For a site with many related pages, add one bounded policy to
-[`rag/ingest/config/crawl_sources.yaml`](rag/ingest/config/crawl_sources.yaml). Set the
-landing page, allowed section prefixes, excluded prefixes, and a maximum link depth. The
-normal discovery/refresh workflow follows same-site links only within that policy, so new
-pages are picked up automatically the next time discovery or refresh runs. Pages outside the
-allow-list, static assets, and explicitly excluded sections are not indexed. This keeps source
-selection reviewable in Git while avoiding a manually copied URL list.
-
 The local server uses Ollama and a local FAISS directory. It does not use the Databricks App
 service principal, OBO identity, or hosted model endpoints.
 
