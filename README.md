@@ -237,6 +237,56 @@ conversation owner. The deployed App does not read your local `.env` file.
 
 ### 5. Refresh or redeploy later
 
+#### Deploy a code-only update to an existing App (no re-index)
+
+Use this sequence when the Databricks App already exists and the active App
+FAISS snapshot is still valid—for example, when deploying a UI, retrieval,
+grounding, or request-tracing change. Your local app may remain running; these
+commands operate only on the workspace copy.
+
+From the repository root, load the private workspace settings and create any
+new Delta tables introduced by the release:
+
+```bash
+set -a
+source .env
+set +a
+
+uv run python -m rag.cli setup-db
+```
+
+Build the browser assets, deploy the Bundle resource configuration, then
+publish that uploaded source to the existing App. `.env` calls the CLI profile
+`RAG_DATABRICKS_PROFILE`, so the commands map it to the Bundle variable names
+explicitly:
+
+```bash
+cd frontend
+npm run build
+cd ..
+
+databricks bundle deploy --target dev --profile "$RAG_DATABRICKS_PROFILE" \
+  --var "catalog=$RAG_CATALOG" \
+  --var "schema=$RAG_SCHEMA" \
+  --var "artifact_volume=$RAG_ARTIFACT_VOLUME" \
+  --var "warehouse_id=$RAG_WAREHOUSE_ID" \
+  --var "embedding_endpoint=$RAG_DATABRICKS_EMBEDDING_ENDPOINT" \
+  --var "reasoning_endpoint=$DATABRICKS_CHAT_ENDPOINT"
+
+databricks apps deploy databricks-docs-rag-dev \
+  --profile "$RAG_DATABRICKS_PROFILE" \
+  --source-code-path "/Workspace/Users/<your-email>/.bundle/databricks-docs-rag/dev/files" \
+  --mode SNAPSHOT
+
+databricks apps get databricks-docs-rag-dev \
+  --profile "$RAG_DATABRICKS_PROFILE"
+```
+
+Replace `<your-email>` with the workspace user who ran `bundle deploy` (for
+example, `ericliaoyf@gmail.com`). `setup-db` only applies idempotent schema
+creation, and none of these commands crawl sources, create embeddings, or
+replace the active FAISS snapshot.
+
 To update documentation, run the bootstrap Bundle's Workflow again from **Workflows** (or use
 the `databricks bundle run` command above). It creates a new
 validated snapshot and atomically marks it active; the previous active snapshot remains usable if
