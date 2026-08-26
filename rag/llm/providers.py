@@ -22,6 +22,19 @@ def _response_text(content) -> str:
     raise RuntimeError("Databricks chat endpoint returned an unsupported message-content format")
 
 
+def _client_config_kwargs(profile: str | None, timeout: float) -> dict:
+    """Bound a serving-endpoint call in time.
+
+    The SDK otherwise applies its own generous defaults, so a stalled endpoint
+    holds a Databricks App request open. The retrieval agent's own deadline
+    cannot help: it is only checked between provider calls.
+    """
+    kwargs = {"http_timeout_seconds": timeout, "retry_timeout_seconds": timeout}
+    if profile:
+        kwargs["profile"] = profile
+    return kwargs
+
+
 class AnswerProvider(Protocol):
     name: str
     model: str
@@ -43,13 +56,14 @@ class OllamaProvider:
 class DatabricksEndpointProvider:
     name = "databricks"
 
-    def __init__(self, endpoint: str, *, profile: str | None = None):
-        self.model, self.profile = endpoint, profile
+    def __init__(self, endpoint: str, *, profile: str | None = None, timeout: float = 90):
+        self.model, self.profile, self.timeout = endpoint, profile, timeout
 
     def complete(self, prompt: str) -> str:
         from databricks.sdk import WorkspaceClient
+        from databricks.sdk.core import Config
         from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
-        client = WorkspaceClient(profile=self.profile) if self.profile else WorkspaceClient()
+        client = WorkspaceClient(config=Config(**_client_config_kwargs(self.profile, self.timeout)))
         response = client.serving_endpoints.query(
             name=self.model,
             messages=[ChatMessage(role=ChatMessageRole.USER, content=prompt)],
