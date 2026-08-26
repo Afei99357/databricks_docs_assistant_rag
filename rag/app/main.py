@@ -16,7 +16,7 @@ from rag.identity import DatabricksAppIdentityProvider
 from rag.index.embeddings import DatabricksEmbeddingProvider
 from rag.index.runtime import VolumeSnapshotRetriever
 from rag.llm.providers import DatabricksEndpointProvider
-from rag.store import DatabricksFeedbackSink, DatabricksStore
+from rag.store import DatabricksFeedbackSink, DatabricksRequestTraceSink, DatabricksStore
 
 
 def create_databricks_app():
@@ -36,13 +36,16 @@ def create_databricks_app():
     feedback = DatabricksFeedbackSink(
         store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model,
     )
+    agent = RetrievalAgent(retriever.retrieve, provider)
     return create_app(
-        retrieve=RetrievalAgent(retriever.retrieve, provider).retrieve,
+        retrieve=agent.retrieve,
         provider=provider,
         threshold=settings.relevance_threshold,
         feedback_sink=feedback,
         history=ConversationRepository(store, settings.namespace),
         identity=DatabricksAppIdentityProvider(),
+        trace_getter=lambda: agent.last_trace,
+        trace_sink=DatabricksRequestTraceSink(store, f"{settings.namespace}.rag_request_traces", provider=provider.name, model=provider.model),
     )
 
 

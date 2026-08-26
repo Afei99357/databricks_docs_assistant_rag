@@ -35,6 +35,19 @@ def test_answer_and_feedback_routes():
     assert received[0]["rating"] == "up"
 
 
+def test_answer_records_retrieval_and_grounding_trace_when_configured():
+    received = []
+    chunk = Chunk("c", "d", "v", 0, "evidence", (), "https://docs.databricks.com/x", "Docs")
+    sink = type("TraceSink", (), {"record": lambda self, **kwargs: received.append(kwargs)})()
+    app = create_app(
+        retrieve=lambda _: [RetrievalResult(chunk, .9, "s")], provider=Provider(), threshold=.3,
+        trace_getter=lambda: None, trace_sink=sink,
+    )
+    assert app.test_client().post("/api/answer", json={"question": "test"}).status_code == 200
+    assert received[0]["grounding_trace"].fallback_reason is None
+    assert received[0]["results"][0].chunk.chunk_id == "c"
+
+
 def test_home_serves_the_preact_application_shell():
     app = create_app(retrieve=lambda _: [], provider=Provider(), threshold=.3)
     response = app.test_client().get("/")

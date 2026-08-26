@@ -225,6 +225,12 @@ The Bundle creates the App and configures these service-principal resources:
 | `databricks-qwen3-embedding-0-6b` | `CAN_QUERY` |
 | `databricks-gpt-oss-20b` | `CAN_QUERY` |
 
+Each answer also writes a request diagnostic record to `rag_request_traces`:
+the resolved query, retrieval searches and selected evidence, raw final model
+output, parsed citations, and any grounding fallback reason. The bootstrap
+Workflow and `rag.cli setup-db` apply the schema before ingestion, so this
+table is created on a first workspace setup and on later rebuilds if missing.
+
 The App starts `rag.app.main:app`, reads the active Volume snapshot, uses the App service
 principal for shared storage/model calls, and uses OBO only to establish the signed-in user's
 conversation owner. The deployed App does not read your local `.env` file.
