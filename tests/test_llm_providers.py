@@ -6,6 +6,7 @@ from rag.llm.providers import (
     OpenAICompatibleProvider,
     _client_config_kwargs,
     _tool_call_from_openai,
+    _tool_calls_from_openai,
 )
 
 
@@ -89,6 +90,19 @@ def test_the_provider_returns_a_native_tool_call():
     assert completions.captured["tools"] == tools
     assert completions.captured["tool_choice"] == "required"
     assert completions.captured["model"] == "qwen"
+
+
+def test_the_provider_preserves_every_native_tool_call_in_one_assistant_turn():
+    assistant = _Message([
+        _Call("search_docs", '{"query": "definition"}', "call_one"),
+        _Call("search_docs", '{"query": "limitations"}', "call_two"),
+    ])
+    calls = _tool_calls_from_openai(assistant)
+    assert [(call.name, call.arguments, call.call_id) for call in calls] == [
+        ("search_docs", {"query": "definition"}, "call_one"),
+        ("search_docs", {"query": "limitations"}, "call_two"),
+    ]
+    assert calls[0].message == calls[1].message
 
 
 def test_the_provider_raises_when_the_model_answers_without_calling_a_tool():

@@ -48,7 +48,7 @@ def _client_config_kwargs(profile: str | None, timeout: float) -> dict:
     return kwargs
 
 
-def _tool_call_from_openai(message) -> ToolCall:
+def _tool_calls_from_openai(message) -> tuple[ToolCall, ...]:
     """Normalize an OpenAI-shaped assistant turn.
 
     ``arguments`` arrives as a JSON string produced by the runtime's constrained
@@ -58,9 +58,16 @@ def _tool_call_from_openai(message) -> ToolCall:
     tool_calls = getattr(message, "tool_calls", None)
     if not tool_calls:
         raise RuntimeError("the serving endpoint returned prose instead of a tool call")
-    call = tool_calls[0]
-    return ToolCall(call.function.name, json.loads(call.function.arguments),
-                    call_id=call.id, message=message.model_dump(exclude_none=True))
+    assistant = message.model_dump(exclude_none=True)
+    return tuple(
+        ToolCall(call.function.name, json.loads(call.function.arguments), call_id=call.id, message=assistant)
+        for call in tool_calls
+    )
+
+
+def _tool_call_from_openai(message) -> ToolCall:
+    """Return one call for single-tool consumers such as follow-up rewriting."""
+    return _tool_calls_from_openai(message)[0]
 
 
 class AnswerProvider(Protocol):
@@ -68,6 +75,7 @@ class AnswerProvider(Protocol):
     model: str
     def complete(self, prompt: str) -> str: ...
     def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall: ...
+    def call_tools(self, messages: list[dict], tools: list[dict]) -> tuple[ToolCall, ...]: ...
 
 
 class _OpenAIChatProvider:
@@ -88,12 +96,15 @@ class _OpenAIChatProvider:
         completion = self._create([{"role": "user", "content": prompt}])
         return (completion.choices[0].message.content or "").strip()
 
-    def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall:
+    def call_tools(self, messages: list[dict], tools: list[dict]) -> tuple[ToolCall, ...]:
         # tool_choice="required" is honoured by Databricks and ignored by
         # Ollama, which is why the agent's system prompt also states the
         # contract in words. Asking for it costs nothing where it works.
         completion = self._create(messages, tools=tools, tool_choice="required")
-        return _tool_call_from_openai(completion.choices[0].message)
+        return _tool_calls_from_openai(completion.choices[0].message)
+
+    def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall:
+        return self.call_tools(messages, tools)[0]
 
 
 class OllamaProvider(_OpenAIChatProvider):

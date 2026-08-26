@@ -36,6 +36,13 @@ class Provider:
         return json.dumps(self.turns[turn], ensure_ascii=False)
 
 
+class BatchProvider(Provider):
+    def call_tools(self, messages, tools):
+        self.turns.append(copy.deepcopy(messages))
+        self.declared_tools.append(tools)
+        return next(self.calls)
+
+
 def _result(name, *, text="evidence", url="https://docs.databricks.com/x", position=0, score=.9):
     return RetrievalResult(Chunk(IDS[name], "doc", "v", position, text, (), url, "Docs"), score, "snap")
 
@@ -102,6 +109,25 @@ def test_agent_searches_reads_then_selects_opened_evidence():
     ]
     assert agent.last_trace.status == "answered"
     assert agent.last_trace.stop_reason == "agent_satisfied"
+
+
+def test_agent_executes_every_search_call_and_returns_all_results_next_turn():
+    tools = Tools()
+    provider = BatchProvider([
+        (
+            ToolCall("search_docs", {"query": "broad question"}, call_id="search-one"),
+            ToolCall("search_docs", {"query": "specific permission"}, call_id="search-two"),
+        ),
+        (ToolCall("read_chunks", {"labels": ["S1", "S2"]}, call_id="read"),),
+        (ToolCall("final", {"selected": ["S1", "S2"]}, call_id="final"),),
+    ])
+    agent = RetrievalAgent(tools, provider)
+    assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"], IDS["permission"]]
+    assert tools.calls[:2] == [("search_docs", "broad question"), ("search_docs", "specific permission")]
+    second_turn = provider.text_at(1)
+    assert ('"label": "S1"' in second_turn or '\\"label\\": \\"S1\\"' in second_turn)
+    assert ('"label": "S2"' in second_turn or '\\"label\\": \\"S2\\"' in second_turn)
+    assert [message["tool_call_id"] for message in provider.turns[1] if message["role"] == "tool"] == ["search-one", "search-two"]
 
 
 def test_observations_address_evidence_by_label_and_never_expose_chunk_ids():

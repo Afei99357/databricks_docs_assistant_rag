@@ -169,11 +169,12 @@ def _resolve_all(ledger: _Ledger, requested) -> list[str]:
     return [chunk_id for chunk_id in resolved if chunk_id is not None]
 
 
-def _assistant_turn(call) -> dict:
-    """Reconstruct an assistant turn for providers that return only the call."""
+def _assistant_turn(calls) -> dict:
+    """Reconstruct an assistant turn for providers that return only calls."""
     return {"role": "assistant", "tool_calls": [
         {"id": call.call_id, "type": "function",
-         "function": {"name": call.name, "arguments": call.arguments}}]}
+         "function": {"name": call.name, "arguments": call.arguments}}
+        for call in calls]}
 
 
 def _reject(name: str, message: str, detail: str) -> Outcome:
@@ -266,15 +267,16 @@ class _Session:
         self.conversation.append({"role": "user", "content": json.dumps(
             {"status": status, "message": message}, ensure_ascii=False)})
 
-    def record(self, call, outcome: Outcome) -> None:
-        """Append the assistant turn and its tool result, in that order."""
-        self.steps.append(outcome.step)
-        self.conversation.append(call.message or _assistant_turn(call))
-        if outcome.observation is not None:
-            self.conversation.append({
-                "role": "tool", "tool_call_id": call.call_id,
-                "content": json.dumps(outcome.observation, ensure_ascii=False),
-            })
+    def record(self, calls, outcomes: list[Outcome]) -> None:
+        """Append one assistant turn and one matched result per tool call."""
+        self.steps.extend(outcome.step for outcome in outcomes)
+        self.conversation.append(calls[0].message or _assistant_turn(calls))
+        for call, outcome in zip(calls, outcomes):
+            if outcome.observation is not None:
+                self.conversation.append({
+                    "role": "tool", "tool_call_id": call.call_id,
+                    "content": json.dumps(outcome.observation, ensure_ascii=False),
+                })
 
 
 class RetrievalAgent:
@@ -321,11 +323,12 @@ class RetrievalAgent:
                 session.notice("final_step", FINAL_STEP_MESSAGE)
             # A provider that cannot produce a tool call raises. There is no
             # degraded path here: a broken protocol is an outage, not an answer.
-            call = self.provider.call_tool(session.conversation, TOOLS)
-            outcome = self._dispatch(session, call)
-            session.record(call, outcome)
-            if outcome.evidence is not None:
-                return self._conclude(session, "agent_satisfied", outcome)
+            calls = self._tool_calls(session)
+            outcomes = self._dispatch_many(session, calls)
+            session.record(calls, outcomes)
+            final = next((outcome for outcome in outcomes if outcome.evidence is not None), None)
+            if final is not None:
+                return self._conclude(session, "agent_satisfied", final)
 
     def _stop_reason(self, session: _Session, started: float) -> str | None:
         if len(session.steps) >= self.max_steps:
@@ -340,6 +343,34 @@ class RetrievalAgent:
             return _reject("agent", "unknown tool; call one of the declared tools",
                            f"unknown tool {call.name!r}")
         return handler(session, call.arguments)
+
+    def _tool_calls(self, session: _Session):
+        call_many = getattr(self.provider, "call_tools", None)
+        if call_many:
+            calls = tuple(call_many(session.conversation, TOOLS))
+        else:
+            calls = (self.provider.call_tool(session.conversation, TOOLS),)
+        if not calls:
+            raise RuntimeError("the serving endpoint returned no tool calls")
+        return calls
+
+    def _dispatch_many(self, session: _Session, calls) -> list[Outcome]:
+        """Execute every call from one agent turn before asking it to reason again.
+
+        Searches are independent from each other at this point: their queries
+        were chosen from the same prior evidence. Their results are returned as
+        separate matched tool messages in the next turn, where the agent can
+        inspect the complete combined result set. Calls that require newly
+        discovered evidence naturally occur in a later turn.
+        """
+        if len(calls) > 1 and any(call.name == "final" for call in calls):
+            return [
+                _reject("final", "final must be the only tool call in its turn; first inspect the other tool results",
+                        "final mixed with other tool calls")
+                if call.name == "final" else self._dispatch(session, call)
+                for call in calls
+            ]
+        return [self._dispatch(session, call) for call in calls]
 
     def _conclude(self, session: _Session, stop_reason: str, outcome: Outcome | None = None) -> list[RetrievalResult]:
         """Build the trace and return evidence from the one place that does so."""
