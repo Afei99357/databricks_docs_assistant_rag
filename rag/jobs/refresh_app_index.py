@@ -18,6 +18,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warehouse-id", required=True)
     parser.add_argument("--artifact-volume", default="rag_artifacts")
     parser.add_argument("--embedding-endpoint", default="databricks-qwen3-embedding-0-6b")
+    parser.add_argument("--embedding-batch-size", type=int, default=10)
+    parser.add_argument("--embedding-min-interval-seconds", type=float, default=2.0)
     parser.add_argument("--schema-sql-path", required=True)
     return parser.parse_args()
 
@@ -48,7 +50,11 @@ def main() -> None:
     if not chunks:
         raise RuntimeError("source refresh produced no chunks")
     print(f"publishing App snapshot from {len(chunks)} chunks...", flush=True)
-    embedder = DatabricksEmbeddingProvider(args.embedding_endpoint)
+    embedder = DatabricksEmbeddingProvider(
+        args.embedding_endpoint,
+        batch_size=args.embedding_batch_size,
+        min_interval_seconds=args.embedding_min_interval_seconds,
+    )
     published = publish_volume_snapshot(
         store,
         namespace=settings.namespace,

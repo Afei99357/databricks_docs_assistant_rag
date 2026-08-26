@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from collections.abc import Sequence
 from typing import Protocol
 
@@ -60,19 +61,39 @@ class OllamaEmbeddingProvider:
 
 class DatabricksEmbeddingProvider:
     """Embedding adapter for a Databricks Model Serving endpoint."""
-    def __init__(self, endpoint: str, *, profile: str | None = None, batch_size: int = 100):
+    def __init__(self, endpoint: str, *, profile: str | None = None, batch_size: int = 10,
+                 min_interval_seconds: float = 2.0, max_rate_limit_retries: int = 8):
         if not 1 <= batch_size <= 150:
             raise ValueError("Databricks embedding batch_size must be between 1 and 150")
         self.model_name, self.profile, self.batch_size, self.dimension = endpoint, profile, batch_size, 0
+        self.min_interval_seconds = min_interval_seconds
+        self.max_rate_limit_retries = max_rate_limit_retries
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         client = WorkspaceClient(profile=self.profile) if self.profile else WorkspaceClient()
         values: list[list[float]] = []
-        for start in range(0, len(texts), self.batch_size):
-            response = client.serving_endpoints.query(
-                name=self.model_name, input=list(texts[start:start + self.batch_size]),
-            )
+        batches = range(0, len(texts), self.batch_size)
+        total_batches = (len(texts) + self.batch_size - 1) // self.batch_size
+        for batch_number, start in enumerate(batches, start=1):
+            batch = list(texts[start:start + self.batch_size])
+            print(f"Embedding batch {batch_number}/{total_batches} ({len(batch)} chunks)...", flush=True)
+            for attempt in range(self.max_rate_limit_retries + 1):
+                try:
+                    response = client.serving_endpoints.query(name=self.model_name, input=batch)
+                    break
+                except Exception as exc:
+                    if "REQUEST_LIMIT_EXCEEDED" not in str(exc) or attempt == self.max_rate_limit_retries:
+                        raise
+                    wait_seconds = min(60.0, 5.0 * (2 ** attempt))
+                    print(
+                        f"Embedding rate limit reached; waiting {wait_seconds:.0f}s before retry "
+                        f"{attempt + 1}/{self.max_rate_limit_retries}...",
+                        flush=True,
+                    )
+                    time.sleep(wait_seconds)
             values.extend(list(item.embedding) for item in response.data or [])
+            if batch_number < total_batches:
+                time.sleep(self.min_interval_seconds)
         if len(values) != len(texts):
             raise RuntimeError("Databricks embedding endpoint returned an unexpected number of vectors")
         if values:
