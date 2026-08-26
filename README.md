@@ -54,6 +54,23 @@ service principal, OBO identity, or hosted model endpoints.
 
 ## Deploy the Databricks App
 
+### Initialize and refresh the App index in Databricks
+
+The bundle includes a serverless Workflow named `databricks-docs-rag-refresh-dev`.
+It creates the configured schema, Delta tables, and artifact Volume if needed; refreshes
+the configured documentation sources; and publishes the embedding-compatible FAISS
+snapshot that the App reads. Run it before the first App deployment and whenever the
+documentation should be refreshed. The job needs permission to create/write the configured
+Unity Catalog objects, use the SQL warehouse, query the embedding endpoint, and reach the
+configured documentation websites.
+
+After deploying the bundle, run it in the Databricks UI from **Workflows**, or with:
+
+```bash
+databricks bundle run refresh_databricks_docs_index --target dev \
+  --profile "$RAG_DATABRICKS_PROFILE" --var "warehouse_id=$RAG_WAREHOUSE_ID"
+```
+
 Use a private `.env` only from the operator machine for the snapshot-build and deployment
 commands. Never upload `.env`; it is ignored by Git. Set the profile, catalog, schema,
 warehouse, and Volume values in `.env`, then run:
