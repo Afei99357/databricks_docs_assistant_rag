@@ -14,8 +14,6 @@ from rag.ingest.sources import (
     GENIE_LANDING_URL,
     CuratedDoc,
     discover_genie_core,
-    discover_site_sections,
-    load_crawl_sources,
     load_curated_docs,
 )
 from rag.models import Chunk
@@ -30,7 +28,6 @@ def official_sources() -> list[CuratedDoc]:
     sources = [
         *discover_genie_core(landing.html),
         *load_curated_docs(config_dir / "curated_urls.yaml"),
-        *discover_site_sections(load_crawl_sources(config_dir / "crawl_sources.yaml")),
     ]
     unique: dict[str, CuratedDoc] = {source.doc_id: source for source in sources}
     return list(unique.values())

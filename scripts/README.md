@@ -11,8 +11,8 @@ RAG_LOCAL_INDEX_DIR=./data python -m rag.cli build-local-snapshot
 RAG_LOCAL_INDEX_DIR=./data python -m rag.cli serve
 ```
 
-`build-local-snapshot` refreshes the configured sources (including the bounded Blueprint
-crawler), updates the governed document/chunk tables, embeds every refreshed chunk with the
+`build-local-snapshot` refreshes the configured sources (the curated official-documentation
+URLs), updates the governed document/chunk tables, embeds every refreshed chunk with the
 local Ollama embedding model, and atomically activates a new snapshot under
 `RAG_LOCAL_INDEX_DIR`. It does not modify the Databricks App snapshot.
 

@@ -16,8 +16,6 @@ from rag.ingest.fetch import fetch_page
 from rag.ingest.sources import (
     GENIE_LANDING_URL,
     discover_genie_core,
-    discover_site_sections,
-    load_crawl_sources,
     load_curated_docs,
 )
 from rag.llm.providers import DatabricksEndpointProvider, OllamaProvider
@@ -37,11 +35,8 @@ def discover() -> None:
     docs = discover_genie_core(landing.html)
     config_dir = Path(__file__).parent / "ingest/config"
     supplemental = load_curated_docs(config_dir / "curated_urls.yaml")
-    crawled = discover_site_sections(load_crawl_sources(config_dir / "crawl_sources.yaml"))
-    print(
-        f"discovered {len(docs)} Genie-core pages, loaded {len(supplemental)} curated pages, and discovered {len(crawled)} crawl pages"
-    )
-    for document in [*docs, *supplemental, *crawled]:
+    print(f"discovered {len(docs)} Genie-core pages and loaded {len(supplemental)} curated pages")
+    for document in [*docs, *supplemental]:
         print(f"{document.doc_id}\t{document.canonical_requested_url}")
 
 
