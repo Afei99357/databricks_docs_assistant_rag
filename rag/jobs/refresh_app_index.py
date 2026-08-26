@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import os
-from pathlib import Path
 
 from rag.config import Settings
 from rag.index.embeddings import DatabricksEmbeddingProvider
@@ -19,6 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warehouse-id", required=True)
     parser.add_argument("--artifact-volume", default="rag_artifacts")
     parser.add_argument("--embedding-endpoint", default="databricks-qwen3-embedding-0-6b")
+    parser.add_argument("--schema-sql-path", required=True)
     return parser.parse_args()
 
 
@@ -34,7 +34,7 @@ def main() -> None:
     settings = Settings.from_env()
     store = DatabricksStore(settings.warehouse_id)
     store.apply_schema(
-        Path(__file__).parents[2] / "sql/001_rag_schema.sql",
+        args.schema_sql_path,
         catalog=settings.catalog,
         schema=settings.schema,
         artifact_volume=settings.artifact_volume,

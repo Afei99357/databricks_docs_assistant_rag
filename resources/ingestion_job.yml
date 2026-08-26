@@ -19,6 +19,8 @@ resources:
               - ${var.artifact_volume}
               - --embedding-endpoint
               - ${var.embedding_endpoint}
+              - --schema-sql-path
+              - ${workspace.file_path}/sql/001_rag_schema.sql
           environment_key: default
           timeout_seconds: 3600
       environments:
