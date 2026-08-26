@@ -36,7 +36,7 @@ def create_databricks_app():
     feedback = DatabricksFeedbackSink(
         store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model,
     )
-    agent = RetrievalAgent(retriever.retrieve, provider)
+    agent = RetrievalAgent(retriever, provider)
     return create_app(
         retrieve=agent.retrieve,
         provider=provider,
@@ -45,7 +45,10 @@ def create_databricks_app():
         history=ConversationRepository(store, settings.namespace),
         identity=DatabricksAppIdentityProvider(),
         trace_getter=lambda: agent.last_trace,
-        trace_sink=DatabricksRequestTraceSink(store, f"{settings.namespace}.rag_request_traces", provider=provider.name, model=provider.model),
+        trace_sink=DatabricksRequestTraceSink(
+            store, f"{settings.namespace}.rag_request_traces", provider=provider.name, model=provider.model,
+            retrieval_table=f"{settings.namespace}.rag_retrieval_traces",
+        ),
     )
 
 
