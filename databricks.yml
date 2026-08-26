@@ -1,5 +1,8 @@
 bundle:
   name: databricks-docs-rag
+  # The direct Bundle engine currently panics while planning a new App with
+  # resource bindings. Terraform is the supported compatibility engine here.
+  engine: terraform
 
 include:
   - resources/apps.yml
