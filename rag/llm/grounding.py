@@ -43,15 +43,15 @@ def answer_groundedly_with_trace(question: str, results: list[RetrievalResult], 
         return Answer("I could not verify this from the indexed documentation.", citations, False, provider.name, snapshot_id), GroundingTrace(None, (), "no_results")
     if results[0].score < threshold:
         return Answer("I could not verify this from the indexed documentation.", citations, False, provider.name, snapshot_id), GroundingTrace(None, (), "below_relevance_threshold")
-    text = provider.complete(build_prompt(question, results))
-    labels = tuple(dict.fromkeys(LABEL.findall(text)))
+    raw_model_output = provider.complete(build_prompt(question, results))
+    labels = tuple(dict.fromkeys(LABEL.findall(raw_model_output)))
     valid_labels = set(labels).intersection(citation.label for citation in citations)
     if not labels:
-        return Answer("I could not verify this from the indexed documentation.", citations, False, provider.name, snapshot_id), GroundingTrace(text, labels, "no_citations_in_model_output")
+        return Answer("I could not verify this from the indexed documentation.", citations, False, provider.name, snapshot_id), GroundingTrace(raw_model_output, labels, "no_citations_in_model_output")
     if not valid_labels:
-        return Answer("I could not verify this from the indexed documentation.", citations, False, provider.name, snapshot_id), GroundingTrace(text, labels, "invalid_citation_labels")
+        return Answer("I could not verify this from the indexed documentation.", citations, False, provider.name, snapshot_id), GroundingTrace(raw_model_output, labels, "invalid_citation_labels")
     cited = tuple(citation for citation in citations if citation.label in valid_labels)
     renumbered = {citation.label: f"S{index}" for index, citation in enumerate(cited, 1)}
-    text = LABEL.sub(lambda match: f"[{renumbered.get(match.group(1), match.group(1))}]", text)
+    text = LABEL.sub(lambda match: f"[{renumbered.get(match.group(1), match.group(1))}]", raw_model_output)
     citations = tuple(replace(citation, label=renumbered[citation.label]) for citation in cited)
-    return Answer(text, citations, True, provider.name, snapshot_id), GroundingTrace(text, labels, None)
+    return Answer(text, citations, True, provider.name, snapshot_id), GroundingTrace(raw_model_output, labels, None)

@@ -39,6 +39,18 @@ def test_grounded_answer_renumbers_cited_sources_without_gaps():
     assert [citation.chunk_id for citation in answer.citations] == ["first", "third"]
 
 
+def test_grounding_trace_preserves_model_labels_before_display_renumbering():
+    answer, trace = answer_groundedly_with_trace(
+        "What is Genie?",
+        [_result(chunk_id="first"), _result(chunk_id="second"), _result(chunk_id="third")],
+        FakeProvider("First [S1]. Third [S3]."),
+        threshold=0.3,
+    )
+    assert answer.text == "First [S1]. Third [S2]."
+    assert trace.raw_model_output == "First [S1]. Third [S3]."
+    assert trace.parsed_citation_labels == ("S1", "S3")
+
+
 def test_grounding_trace_records_uncited_model_fallback_reason():
     answer, trace = answer_groundedly_with_trace(
         "What is Genie?", [_result()], FakeProvider("I cannot verify this."), threshold=0.3
