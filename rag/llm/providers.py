@@ -116,6 +116,30 @@ class OllamaProvider(_OpenAIChatProvider):
         return self._cached
 
 
+class OpenAICompatibleProvider(_OpenAIChatProvider):
+    """A local or self-hosted OpenAI-compatible chat endpoint.
+
+    This is intentionally separate from Ollama: it lets the retrieval agent
+    use a stronger tool-calling model while the local answer generator remains
+    on the configured Ollama model.
+    """
+
+    name = "openai-compatible"
+
+    def __init__(self, base_url: str, model: str, *, api_key: str = "local", timeout: float = 120):
+        self.model, self.timeout = model, timeout
+        self.base_url = base_url.rstrip("/")
+        if not self.base_url.endswith("/v1"):
+            self.base_url += "/v1"
+        self.api_key, self.extra_body, self._cached = api_key, {}, None
+
+    def _client(self):
+        if self._cached is None:
+            from openai import OpenAI
+            self._cached = OpenAI(base_url=self.base_url, api_key=self.api_key, timeout=self.timeout)
+        return self._cached
+
+
 class DatabricksEndpointProvider(_OpenAIChatProvider):
     name = "databricks"
 

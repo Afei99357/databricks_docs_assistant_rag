@@ -20,7 +20,7 @@ from rag.ingest.sources import (
     discover_genie_core,
     load_curated_docs,
 )
-from rag.llm.providers import DatabricksEndpointProvider, OllamaProvider
+from rag.llm.providers import DatabricksEndpointProvider, OllamaProvider, OpenAICompatibleProvider
 from rag.store import DatabricksFeedbackSink, DatabricksRequestTraceSink, DatabricksStore
 from rag.workflow import (
     build_snapshot,
@@ -66,15 +66,21 @@ def _local_stack(settings: Settings):
             settings.databricks_chat_endpoint, profile=settings.databricks_profile
         )
     )
-    return ActiveSnapshotRetriever(root, embedder, settings.top_k), provider
+    agent_provider = (
+        OpenAICompatibleProvider(settings.agent_base_url, settings.agent_model,
+                                 api_key=settings.agent_api_key or "local")
+        if settings.agent_base_url and settings.agent_model
+        else provider
+    )
+    return ActiveSnapshotRetriever(root, embedder, settings.top_k), provider, agent_provider
 
 
 def evaluate(mode: str) -> None:
     """Run the question battery and print the per-case table."""
     settings = Settings.from_env()
-    retriever, provider = _local_stack(settings)
+    retriever, _provider, agent_provider = _local_stack(settings)
     retrieve = (retriever.retrieve if mode == "plain"
-                else RetrievalAgent(retriever, provider).retrieve)
+                else RetrievalAgent(retriever, agent_provider).retrieve)
     cases = load_cases()
     print(f"evaluating {len(cases)} questions against {mode} retrieval", flush=True)
     print(format_header(), flush=True)
@@ -88,14 +94,14 @@ def evaluate(mode: str) -> None:
 
 def serve() -> None:
     settings = Settings.from_env()
-    retriever, provider = _local_stack(settings)
+    retriever, provider, agent_provider = _local_stack(settings)
     from rag.app.web import create_app
 
     store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
     feedback = DatabricksFeedbackSink(
         store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model
     )
-    agent = RetrievalAgent(retriever, provider)
+    agent = RetrievalAgent(retriever, agent_provider)
     history = ConversationRepository(store, settings.namespace)
     identity = LocalTestIdentityProvider()
     create_app(

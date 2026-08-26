@@ -3,6 +3,7 @@ import pytest
 from rag.llm.providers import (
     DatabricksEndpointProvider,
     OllamaProvider,
+    OpenAICompatibleProvider,
     _client_config_kwargs,
     _tool_call_from_openai,
 )
@@ -63,6 +64,11 @@ def test_ollama_talks_to_the_openai_compatible_endpoint():
 
 def test_ollama_disables_reasoning_through_the_vendor_extension():
     assert OllamaProvider("http://localhost:11434", "qwen").extra_body == {"think": False}
+
+
+def test_openai_compatible_provider_keeps_or_adds_the_v1_path():
+    assert OpenAICompatibleProvider("http://intuition.local:1234", "muse").base_url == "http://intuition.local:1234/v1"
+    assert OpenAICompatibleProvider("http://intuition.local:1234/v1", "muse").base_url == "http://intuition.local:1234/v1"
 
 
 def test_the_provider_returns_a_native_tool_call():
