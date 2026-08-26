@@ -15,9 +15,11 @@ class GroundingTrace:
     raw_model_output: str | None
     parsed_citation_labels: tuple[str, ...]
     fallback_reason: str | None
+
+
 def build_prompt(question: str, results: list[RetrievalResult]) -> str:
     evidence = "\n\n".join(f"[S{i}] {result.chunk.source_title}\nURL: {result.chunk.source_url}\nExcerpt: {result.chunk.text}" for i, result in enumerate(results, 1))
-    return f"""You are an internal Databricks documentation assistant. Answer only from the indexed documentation excerpts below. The source set includes official Databricks documentation and approved supplemental guidance; identify a source as official only when its URL is on docs.databricks.com. Every factual claim must cite one or more source labels such as [S1]. Do not use background knowledge and do not infer a general product behavior from an excerpt that discusses a narrower context such as benchmarks, APIs, or trusted assets. For comparison questions, state only differences that are directly supported; explicitly say which requested differences the excerpts do not establish. If the excerpts do not support an answer, reply exactly: I could not verify this from the indexed documentation.
+    return f"""You are an internal Databricks documentation assistant. Answer only from the indexed documentation excerpts below. The source set includes official Databricks documentation and approved supplemental guidance; identify a source as official only when its URL is on docs.databricks.com. Every factual claim must cite one or more source labels such as [S1]. Do not use background knowledge and do not infer a general product behavior from an excerpt that discusses a narrower context such as benchmarks, APIs, or trusted assets. For comparison questions, state only differences that are directly supported; explicitly say which requested differences the excerpts do not establish. If the excerpts support only part of a multi-part question, answer that supported part with citations and explicitly say which remaining part could not be verified. Reply exactly "I could not verify this from the indexed documentation." only when no part of the question is supported.
 
 Question: {question}
 
