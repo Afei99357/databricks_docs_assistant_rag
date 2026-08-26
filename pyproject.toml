@@ -26,7 +26,7 @@ embedding = ["sentence-transformers>=3.0", "torch>=2.0"]
 include = ["rag*"]
 
 [tool.setuptools.package-data]
-rag = ["ingest/config/*.yaml", "app/templates/*.html", "app/static/*.js", "app/static/*.css"]
+rag = ["ingest/config/*.yaml", "app/templates/*.html", "app/static/*.js", "app/static/*.css", "app/static/ui/**/*"]
 
 [project.scripts]
 rag = "rag.cli:main"
