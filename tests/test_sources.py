@@ -44,20 +44,17 @@ def test_curated_sources_include_content_search():
     )
 
 
-def test_crawl_policy_loads_blueprint_allow_list():
+def test_crawl_policy_yaml_has_no_configured_sources():
     path = Path(__file__).parents[1] / "rag/ingest/config/crawl_sources.yaml"
     sources = load_crawl_sources(path)
-    assert len(sources) == 1
-    assert sources[0].name == "blueprint-genie-playbook"
-    assert "trust-foundations/" in sources[0].allowed_prefixes
-    assert "learning-paths/" in sources[0].excluded_prefixes
+    assert sources == []
 
 
 def test_bounded_site_crawler_discovers_allowed_new_pages_and_excludes_other_sections():
     source = CrawlSource(
         name="test",
         root_url="https://example.com/docs/",
-        category="blueprint-genie",
+        category="genie-concepts",
         reason="test",
         allowed_prefixes=("trust/",),
         excluded_prefixes=("private/",),

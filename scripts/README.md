@@ -11,10 +11,11 @@ RAG_LOCAL_INDEX_DIR=./data python -m rag.cli build-local-snapshot
 RAG_LOCAL_INDEX_DIR=./data python -m rag.cli serve
 ```
 
-`build-local-snapshot` refreshes the configured sources (including the bounded Blueprint
-crawler), updates the governed document/chunk tables, embeds every refreshed chunk with the
-local Ollama embedding model, and atomically activates a new snapshot under
-`RAG_LOCAL_INDEX_DIR`. It does not modify the Databricks App snapshot.
+`build-local-snapshot` refreshes the configured sources (the curated official-documentation
+URLs, plus any bounded site crawlers configured in `crawl_sources.yaml`), updates the governed
+document/chunk tables, embeds every refreshed chunk with the local Ollama embedding model, and
+atomically activates a new snapshot under `RAG_LOCAL_INDEX_DIR`. It does not modify the
+Databricks App snapshot.
 
 After a local Qwen model is installed, the operational sequence is: fetch/extract a small
 source set, inspect chunks, build a 0.6B FAISS snapshot, run `tests/evaluation_cases.yaml`,

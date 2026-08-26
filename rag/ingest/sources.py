@@ -28,7 +28,6 @@ CATEGORIES = frozenset(
         "multi-agent-apps",
         "uc-permissions-security",
         "databricks-apps",
-        "blueprint-genie",
     }
 )
 TRACKING_PARAMS = {
