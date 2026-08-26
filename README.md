@@ -52,6 +52,14 @@ history, and feedback tables.
    OLLAMA_MODEL=qwen3.5:latest
    ```
 
+   Load those settings into the current terminal before running any `rag.cli` command:
+
+   ```bash
+   set -a
+   source .env
+   set +a
+   ```
+
 3. Start Ollama and make sure both local models are available:
 
    ```bash
@@ -74,7 +82,8 @@ history, and feedback tables.
    ```
 
 Run `uv run python -m rag.cli build-local-snapshot` again whenever you want to refresh the
-configured documentation sources and rebuild the local index.
+configured documentation sources and rebuild the local index. In a new terminal, load `.env`
+again with the three `set -a`/`source`/`set +a` commands above before using the CLI.
 
 ### Add a crawlable documentation site
 
