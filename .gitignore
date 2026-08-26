@@ -9,3 +9,4 @@ build/
 data/
 tmp/
 frontend/node_modules/
+frontend/tsconfig.tsbuildinfo
