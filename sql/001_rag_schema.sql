@@ -1,4 +1,5 @@
 -- Substitute ${catalog}, ${schema}, and ${artifact_volume} in the execution layer.
+CREATE CATALOG IF NOT EXISTS ${catalog};
 CREATE SCHEMA IF NOT EXISTS ${catalog}.${schema};
 
 CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_documents (
