@@ -7,7 +7,7 @@ from time import perf_counter
 from flask import Flask, jsonify, render_template, request
 
 from rag.conversation import resolve_follow_up
-from rag.llm.grounding import answer_groundedly
+from rag.llm.grounding import answer_groundedly_with_trace
 from rag.models import RetrievalResult
 
 STARTER_QUESTIONS = [
@@ -19,7 +19,8 @@ STARTER_QUESTIONS = [
 
 
 def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, threshold: float,
-               feedback_sink: Callable[[dict], None] | None = None, history=None, identity=None) -> Flask:
+               feedback_sink: Callable[[dict], None] | None = None, history=None, identity=None,
+               trace_getter: Callable[[], object | None] | None = None, trace_sink=None) -> Flask:
     app = Flask(__name__)
     app.config["STARTER_QUESTIONS"] = STARTER_QUESTIONS
 
@@ -75,11 +76,20 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         resolved_query = resolve_follow_up(question, prior_turns, provider) if prior_turns else question
         started = perf_counter()
         retrieved = retrieve(resolved_query)
-        result = answer_groundedly(question, retrieved, provider, threshold=threshold)
+        result, grounding_trace = answer_groundedly_with_trace(question, retrieved, provider, threshold=threshold)
+        turn_id = None
         if history and identity:
             conversation_id = conversation_id or history.create(owner, question)
-            history.append_turn(owner, conversation_id, question=question, resolved_query=resolved_query, answer=result,
-                                citation_ids=[item.chunk_id for item in result.citations], latency_ms=round((perf_counter() - started) * 1000))
+            turn_id = history.append_turn(owner, conversation_id, question=question, resolved_query=resolved_query, answer=result,
+                                          citation_ids=[item.chunk_id for item in result.citations], latency_ms=round((perf_counter() - started) * 1000))
+        if trace_sink:
+            try:
+                trace_sink.record(turn_id=turn_id, conversation_id=conversation_id, owner=owner, question=question,
+                                  resolved_query=resolved_query, retrieval_trace=trace_getter() if trace_getter else None,
+                                  results=retrieved, grounding_trace=grounding_trace, answer=result,
+                                  latency_ms=round((perf_counter() - started) * 1000))
+            except Exception:
+                app.logger.exception("failed to persist request trace")
         return jsonify({"question": question, "answer": result.text, "supported": result.supported,
                         "provider": result.provider, "snapshot_id": result.snapshot_id,
                         "latency_ms": round((perf_counter() - started) * 1000),

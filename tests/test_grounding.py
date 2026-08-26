@@ -1,4 +1,4 @@
-from rag.llm.grounding import answer_groundedly, build_prompt
+from rag.llm.grounding import answer_groundedly, answer_groundedly_with_trace, build_prompt
 from rag.models import Chunk, RetrievalResult
 
 
@@ -37,3 +37,12 @@ def test_grounded_answer_renumbers_cited_sources_without_gaps():
     assert answer.text == "First [S1]. Third [S2]."
     assert [citation.label for citation in answer.citations] == ["S1", "S2"]
     assert [citation.chunk_id for citation in answer.citations] == ["first", "third"]
+
+
+def test_grounding_trace_records_uncited_model_fallback_reason():
+    answer, trace = answer_groundedly_with_trace(
+        "What is Genie?", [_result()], FakeProvider("I cannot verify this."), threshold=0.3
+    )
+    assert not answer.supported
+    assert trace.raw_model_output == "I cannot verify this."
+    assert trace.fallback_reason == "no_citations_in_model_output"

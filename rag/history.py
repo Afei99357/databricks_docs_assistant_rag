@@ -22,10 +22,12 @@ class ConversationRepository:
     def turns_for(self, owner: str, conversation_id: str):
         return self.store.execute(f"SELECT t.turn_id,t.turn_number,t.user_question,t.answer_text,t.supported,t.snapshot_id,t.citation_chunk_ids,t.created_at FROM {self.turns} t JOIN {self.conversations} c ON t.conversation_id=c.conversation_id WHERE c.owner_user_id={sql_literal(owner)} AND c.conversation_id={sql_literal(conversation_id)} AND c.status='active' ORDER BY t.turn_number").rows
 
-    def append_turn(self, owner: str, conversation_id: str, *, question: str, resolved_query: str, answer, citation_ids: list[str], latency_ms: int) -> None:
+    def append_turn(self, owner: str, conversation_id: str, *, question: str, resolved_query: str, answer, citation_ids: list[str], latency_ms: int) -> str:
         owned = self.store.execute(f"SELECT count(*) FROM {self.conversations} WHERE conversation_id={sql_literal(conversation_id)} AND owner_user_id={sql_literal(owner)} AND status='active'").rows[0][0]
         if int(owned) != 1: raise PermissionError("conversation not found")
         number = int(self.store.execute(f"SELECT coalesce(max(turn_number),0)+1 FROM {self.turns} WHERE conversation_id={sql_literal(conversation_id)}").rows[0][0])
         values = ','.join(sql_literal(value) for value in citation_ids)
-        self.store.execute(f"INSERT INTO {self.turns} (turn_id,conversation_id,turn_number,user_question,resolved_query,answer_text,supported,provider,model,snapshot_id,citation_chunk_ids,created_at,latency_ms) VALUES ({sql_literal(uuid4().hex)},{sql_literal(conversation_id)},{number},{sql_literal(question)},{sql_literal(resolved_query)},{sql_literal(answer.text)},{sql_literal(answer.supported)},{sql_literal(answer.provider)},NULL,{sql_literal(answer.snapshot_id)},array({values}),current_timestamp(),{latency_ms})")
+        turn_id = uuid4().hex
+        self.store.execute(f"INSERT INTO {self.turns} (turn_id,conversation_id,turn_number,user_question,resolved_query,answer_text,supported,provider,model,snapshot_id,citation_chunk_ids,created_at,latency_ms) VALUES ({sql_literal(turn_id)},{sql_literal(conversation_id)},{number},{sql_literal(question)},{sql_literal(resolved_query)},{sql_literal(answer.text)},{sql_literal(answer.supported)},{sql_literal(answer.provider)},NULL,{sql_literal(answer.snapshot_id)},array({values}),current_timestamp(),{latency_ms})")
         self.store.execute(f"UPDATE {self.conversations} SET updated_at=current_timestamp() WHERE conversation_id={sql_literal(conversation_id)}")
+        return turn_id

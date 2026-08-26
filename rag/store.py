@@ -1,6 +1,7 @@
 """Small Databricks SQL/Volume adapter; Delta is the system of record."""
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -89,3 +90,36 @@ class DatabricksFeedbackSink:
         }
         values = ", ".join(value if key == "retrieved_chunk_ids" else sql_literal(value) for key, value in columns.items())
         self.store.execute(f"INSERT INTO {self.table} ({', '.join(columns)}) VALUES ({values})")
+
+
+class DatabricksRequestTraceSink:
+    """Persist final-answer diagnostics without storing the full model prompt."""
+
+    def __init__(self, store: DatabricksStore, table: str, *, provider: str, model: str):
+        self.store, self.table, self.provider, self.model = store, table, provider, model
+
+    def record(self, *, turn_id: str | None, conversation_id: str | None, owner: str | None,
+               question: str, resolved_query: str, retrieval_trace, results, grounding_trace,
+               answer, latency_ms: int) -> None:
+        evidence = [
+            {"chunk_id": item.chunk.chunk_id, "score": item.score, "title": item.chunk.source_title,
+             "heading_path": item.chunk.heading_path, "source_url": item.chunk.source_url}
+            for item in results
+        ]
+        queries = tuple(getattr(retrieval_trace, "queries", ()) or ())
+        selected = tuple(getattr(retrieval_trace, "selected_chunk_ids", ()) or ())
+        values = {
+            "trace_id": uuid4().hex, "turn_id": turn_id, "conversation_id": conversation_id,
+            "owner_user_id": owner, "user_question": question, "resolved_query": resolved_query,
+            "retrieval_queries": "array(" + ",".join(sql_literal(value) for value in queries) + ")",
+            "retrieval_status": getattr(retrieval_trace, "status", "unavailable"),
+            "selected_evidence_json": json.dumps({"selected_chunk_ids": selected, "evidence": evidence}),
+            "raw_model_output": grounding_trace.raw_model_output,
+            "parsed_citation_labels": "array(" + ",".join(sql_literal(value) for value in grounding_trace.parsed_citation_labels) + ")",
+            "fallback_reason": grounding_trace.fallback_reason, "final_answer_text": answer.text,
+            "supported": answer.supported, "provider": self.provider, "model": self.model,
+            "snapshot_id": answer.snapshot_id, "latency_ms": latency_ms, "created_at": "current_timestamp()",
+        }
+        raw = {"retrieval_queries", "parsed_citation_labels", "created_at"}
+        rendered = ", ".join(value if key in raw else sql_literal(value) for key, value in values.items())
+        self.store.execute(f"INSERT INTO {self.table} ({', '.join(values)}) VALUES ({rendered})")

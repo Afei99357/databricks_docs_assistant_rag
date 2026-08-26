@@ -55,4 +55,15 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_retrieval_traces (
   agent_decision STRING NOT NULL, created_at TIMESTAMP NOT NULL, latency_ms BIGINT
 ) USING DELTA;
 
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_request_traces (
+  trace_id STRING NOT NULL, turn_id STRING, conversation_id STRING, owner_user_id STRING,
+  user_question STRING NOT NULL, resolved_query STRING NOT NULL,
+  retrieval_queries ARRAY<STRING>, retrieval_status STRING,
+  selected_evidence_json STRING, raw_model_output STRING,
+  parsed_citation_labels ARRAY<STRING>, fallback_reason STRING,
+  final_answer_text STRING NOT NULL, supported BOOLEAN NOT NULL,
+  provider STRING NOT NULL, model STRING, snapshot_id STRING NOT NULL,
+  latency_ms BIGINT, created_at TIMESTAMP NOT NULL
+) USING DELTA;
+
 CREATE VOLUME IF NOT EXISTS ${catalog}.${schema}.${artifact_volume};

@@ -19,7 +19,7 @@ from rag.ingest.sources import (
     load_curated_docs,
 )
 from rag.llm.providers import DatabricksEndpointProvider, OllamaProvider
-from rag.store import DatabricksFeedbackSink, DatabricksStore
+from rag.store import DatabricksFeedbackSink, DatabricksRequestTraceSink, DatabricksStore
 from rag.workflow import (
     build_snapshot,
     load_current_chunks,
@@ -71,9 +71,9 @@ def serve() -> None:
     feedback = DatabricksFeedbackSink(
         store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model
     )
+    agent = RetrievalAgent(retriever.retrieve, provider)
     history = ConversationRepository(store, settings.namespace)
     identity = LocalTestIdentityProvider()
-    agent = RetrievalAgent(retriever.retrieve, provider)
     create_app(
         retrieve=agent.retrieve,
         provider=provider,
@@ -81,6 +81,8 @@ def serve() -> None:
         feedback_sink=feedback,
         history=history,
         identity=identity,
+        trace_getter=lambda: agent.last_trace,
+        trace_sink=DatabricksRequestTraceSink(store, f"{settings.namespace}.rag_request_traces", provider=provider.name, model=provider.model),
     ).run(host="127.0.0.1", port=int(os.getenv("PORT", "8000")), debug=False)
 
 
