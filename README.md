@@ -31,13 +31,50 @@ history/feedback tables, SQL warehouse, and the two model endpoints.
 
 ## Local setup
 
-1. Create and activate a virtual environment.
-2. Install with `pip install -e '.[dev]'`.
-3. Copy `.env.example` to `.env` and set local values.
-4. Apply [`sql/001_rag_schema.sql`](sql/001_rag_schema.sql) with the configured profile:
-   `python -m rag.cli setup-db`.
-5. Verify live HTML extraction before spending embedding compute:
-   `python -m rag.cli discover`.
+The local server uses Ollama for answer generation and embeddings, and a local FAISS directory
+for retrieval. It still uses the configured Databricks SQL warehouse for the governed document,
+history, and feedback tables.
+
+1. Install the locked project dependencies and create a private environment file:
+
+   ```bash
+   uv sync --extra dev
+   cp .env.example .env
+   ```
+
+2. Edit `.env`. At minimum, configure your Databricks profile/catalog/schema/warehouse and set:
+
+   ```text
+   RAG_LOCAL_INDEX_DIR=/absolute/path/to/local-faiss-index
+   RAG_LOCAL_TEST_USER_ID=your-email@example.com
+   ANSWER_PROVIDER=ollama
+   RAG_EMBEDDING_MODEL=qwen3-embedding:4b
+   OLLAMA_MODEL=qwen3.5:latest
+   ```
+
+3. Start Ollama and make sure both local models are available:
+
+   ```bash
+   ollama pull qwen3-embedding:4b
+   ollama pull qwen3.5:latest
+   ```
+
+4. Create the governed tables/Volume, fetch and chunk the configured sources, and build the
+   local Ollama-backed FAISS snapshot:
+
+   ```bash
+   uv run python -m rag.cli setup-db
+   uv run python -m rag.cli build-local-snapshot
+   ```
+
+5. Start the local application and open `http://127.0.0.1:8000`:
+
+   ```bash
+   uv run python -m rag.cli serve
+   ```
+
+Run `uv run python -m rag.cli build-local-snapshot` again whenever you want to refresh the
+configured documentation sources and rebuild the local index.
 
 ### Add a crawlable documentation site
 
