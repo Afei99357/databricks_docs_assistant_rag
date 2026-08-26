@@ -26,7 +26,7 @@ class Settings:
 
     @property
     def volume_path(self) -> str:
-        return f"/Volumes/{self.namespace}/{self.artifact_volume}"
+        return f"/Volumes/{self.catalog}/{self.schema}/{self.artifact_volume}"
 
     @classmethod
     def from_env(cls) -> "Settings":
