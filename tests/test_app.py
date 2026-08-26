@@ -1,4 +1,5 @@
 from rag.app.web import create_app
+from rag.llm.providers import ToolCall
 from rag.models import Chunk, RetrievalResult
 
 
@@ -6,8 +7,9 @@ class Provider:
     name = "fake"; model = "fake"
     def complete(self, prompt):
         if "Select the" in prompt: return "S1"
-        if "standalone_query" in prompt: return '{"standalone_query":"resolved follow-up"}'
         return "Supported answer [S1]."
+    def call_tool(self, messages, tools):
+        return ToolCall("standalone_query", {"query": "resolved follow-up"})
 
 
 class Identity:

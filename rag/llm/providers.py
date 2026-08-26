@@ -35,22 +35,6 @@ class ToolCall:
     """The assistant turn exactly as the runtime produced it, for appending."""
 
 
-def _response_text(content) -> str:
-    """Normalize classic chat text and Responses-style content parts."""
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict):
-                if item.get("type") == "text" and isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-            elif getattr(item, "type", None) == "text" and isinstance(getattr(item, "text", None), str):
-                parts.append(item.text)
-        return "\n".join(parts).strip()
-    raise RuntimeError("chat endpoint returned an unsupported message-content format")
-
-
 def _client_config_kwargs(profile: str | None, timeout: float) -> dict:
     """Bound a serving-endpoint call in time.
 
@@ -102,7 +86,7 @@ class _OpenAIChatProvider:
 
     def complete(self, prompt: str) -> str:
         completion = self._create([{"role": "user", "content": prompt}])
-        return _response_text(completion.choices[0].message.content)
+        return (completion.choices[0].message.content or "").strip()
 
     def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall:
         # tool_choice="required" is honoured by Databricks and ignored by
