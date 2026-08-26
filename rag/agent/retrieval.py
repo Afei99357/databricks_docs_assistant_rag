@@ -148,6 +148,120 @@ def _compact_card(card: dict) -> dict:
     return {"label": card["label"], "title": card["title"], "heading": card["heading"]}
 
 
+def _opened_card(ledger: _Ledger, item: RetrievalResult) -> dict:
+    return {"label": ledger.label(item.chunk.chunk_id), "title": item.chunk.source_title,
+            "url": item.chunk.source_url, "heading": " > ".join(item.chunk.heading_path),
+            "text": item.chunk.text}
+
+
+def _trace_cards(cards: list[dict], results: list[RetrievalResult]) -> list[dict]:
+    """Trace records keep the chunk ID that the prompt deliberately omits."""
+    return [{**card, "chunk_id": item.chunk.chunk_id} for card, item in zip(cards, results)]
+
+
+def _resolve_all(ledger: _Ledger, requested) -> list[str]:
+    if not isinstance(requested, list):
+        return []
+    resolved = (ledger.resolve(value) for value in requested)
+    return [chunk_id for chunk_id in resolved if chunk_id is not None]
+
+
+def _compact(observations: list[dict]) -> list[dict]:
+    """Drop excerpt bodies from every search except the most recent one.
+
+    Ranked excerpts are leads. Once the model has moved past a search, the
+    excerpt text of chunks it never opened is dead weight that grows the prompt
+    on every turn. Labels, titles and headings stay so earlier results remain
+    addressable; opened chunk text is never touched.
+    """
+    latest = max((index for index, item in enumerate(observations)
+                  if item.get("tool") in _SEARCH_TOOLS and item.get("status") in _SEARCH_RESULT_STATUSES),
+                 default=-1)
+    return [
+        {**item, "results": [_compact_card(card) for card in item["results"]]}
+        if index != latest and item.get("tool") in _SEARCH_TOOLS and "results" in item else item
+        for index, item in enumerate(observations)
+    ]
+
+
+def _reject(name: str, message: str, detail: str) -> Outcome:
+    """Refuse a tool call and tell the model why, in one place."""
+    return Outcome(ToolStep(name, "rejected", detail=detail),
+                   {"tool": name, "status": "rejected", "message": message})
+
+
+def _reject_duplicate(name: str, query, message: str) -> Outcome:
+    return Outcome(ToolStep(name, "rejected_duplicate", query=query),
+                   {"tool": name, "status": "rejected_duplicate", "query": query, "message": message})
+
+
+FINAL_STEP_MESSAGE = ("This is your last step. Return a final action selecting the opened evidence "
+                      "that answers the question, and list anything still unverified.")
+
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """What executing one tool call produced.
+
+    Handlers return this instead of mutating shared state and calling
+    ``continue``. The loop records every outcome the same way, so a handler
+    cannot forget to leave a trace step or an observation behind.
+
+    ``evidence`` is ``None`` while the investigation continues; a non-``None``
+    value ends it, so the loop never infers termination from a tool name.
+    """
+    step: ToolStep
+    observation: dict | None = None
+    evidence: list[RetrievalResult] | None = None
+    trace_status: str | None = None
+
+
+class _Session:
+    """Everything one investigation accumulates.
+
+    The loop and every handler share exactly this object. Adding a tool means
+    writing a handler, not threading another local through the loop.
+    """
+
+    def __init__(self):
+        self.ledger = _Ledger()
+        self.opened: dict[str, RetrievalResult] = {}
+        self.queries: list[str] = []
+        self.observations: list[dict] = []
+        self.steps: list[ToolStep] = []
+        self._query_keys: set[str] = set()
+
+    @property
+    def has_searched(self) -> bool:
+        return bool(self.queries)
+
+    def repeats_search(self, key: str) -> bool:
+        return key in self._query_keys
+
+    def note_search(self, key: str, query: str) -> None:
+        self._query_keys.add(key)
+        self.queries.append(query)
+
+    def mark_opened(self, results: list[RetrievalResult]) -> None:
+        """Open chunks at their score of record.
+
+        Reading exposes full text but must not make a low-ranked chunk look
+        stronger than its retrieval evidence, so the ledger's score wins over
+        the retriever's placeholder.
+        """
+        for item in results:
+            self.opened[item.chunk.chunk_id] = self.ledger.results.get(item.chunk.chunk_id, item)
+
+    def notice(self, status: str, message: str) -> None:
+        self.observations.append({"tool": "agent_protocol", "status": status, "message": message})
+
+    def record(self, outcome: Outcome) -> None:
+        self.steps.append(outcome.step)
+        if outcome.observation is not None:
+            self.observations.append(outcome.observation)
+
+
 class RetrievalAgent:
     """A provider-neutral, iterative documentation retrieval harness."""
 
@@ -171,6 +285,170 @@ class RetrievalAgent:
         self.max_steps, self.max_evidence = max_steps, max_evidence
         self.min_new_chunks = min_new_chunks
         self.last_trace: RetrievalTrace | None = None
+        self._handlers = {
+            "search_docs": self._search_docs,
+            "read_chunks": self._read_chunks,
+            "get_related_chunks": self._get_related_chunks,
+            "search_within_document": self._search_within_document,
+            "final": self._final,
+        }
+
+    # -- the loop -----------------------------------------------------------
+
+    def retrieve(self, question: str) -> list[RetrievalResult]:
+        session = _Session()
+        started = perf_counter()
+        while True:
+            stop_reason = self._stop_reason(session, started)
+            if stop_reason:
+                return self._conclude(session, stop_reason)
+            if len(session.steps) == self.max_steps - 1:
+                session.notice("final_step", FINAL_STEP_MESSAGE)
+            # A provider that cannot produce a tool call raises. There is no
+            # degraded path here: a broken protocol is an outage, not an answer.
+            call = self.provider.call_tool(self._prompt(question, session.observations), TOOLS)
+            outcome = self._dispatch(session, call)
+            session.record(outcome)
+            if outcome.evidence is not None:
+                return self._conclude(session, "agent_satisfied", outcome)
+
+    def _stop_reason(self, session: _Session, started: float) -> str | None:
+        if len(session.steps) >= self.max_steps:
+            return "step_budget_exhausted"
+        if perf_counter() - started >= self.deadline_seconds:
+            return "request_deadline_reached"
+        return None
+
+    def _dispatch(self, session: _Session, call) -> Outcome:
+        handler = self._handlers.get(call.name)
+        if handler is None:
+            return _reject("agent", "unknown tool; call one of the declared tools",
+                           f"unknown tool {call.name!r}")
+        return handler(session, call.arguments)
+
+    def _conclude(self, session: _Session, stop_reason: str, outcome: Outcome | None = None) -> list[RetrievalResult]:
+        """Build the trace and return evidence from the one place that does so."""
+        if outcome is not None:
+            selected, status = outcome.evidence, outcome.trace_status
+        else:
+            selected = self._rank(session.opened.values())
+            status = "partial" if selected else "fallback"
+        self.last_trace = RetrievalTrace(
+            tuple(session.queries), tuple(item.chunk.chunk_id for item in selected),
+            status, tuple(session.steps), stop_reason,
+        )
+        return selected
+
+    # -- tool handlers ------------------------------------------------------
+
+    def _search_docs(self, session: _Session, arguments: dict) -> Outcome:
+        query = arguments.get("query")
+        key = _normal_query(query) if isinstance(query, str) else ""
+        if not key:
+            return _reject("search_docs", "query must be a non-empty string", "empty query")
+        if session.repeats_search(key):
+            return _reject_duplicate("search_docs", query,
+                                     "This search repeats a prior query. Make it more specific or finalize.")
+        return self._searched(session, "search_docs", query, key,
+                              self.tools.retrieve(query, self.candidates_per_search))
+
+    def _search_within_document(self, session: _Session, arguments: dict) -> Outcome:
+        anchor = session.ledger.resolve(arguments.get("source"))
+        query = arguments.get("query")
+        normalized = _normal_query(query) if isinstance(query, str) else ""
+        if anchor is None or not normalized:
+            return _reject("search_within_document",
+                           "use the label of retrieved evidence as source and a non-empty query",
+                           "invalid document search")
+        source_url = session.ledger.results[anchor].chunk.source_url
+        key = f"document:{source_url}:{normalized}"
+        if session.repeats_search(key):
+            return _reject_duplicate("search_within_document", query,
+                                     "This in-document search repeats a prior query.")
+        results = self.tools.search_within_document(source_url, query, self.candidates_per_search)
+        return self._searched(session, "search_within_document", query, key, results,
+                              recorded_query=f"within {source_url}: {query}", source_url=source_url)
+
+    def _searched(self, session: _Session, name: str, query: str, key: str,
+                  results: list[RetrievalResult], *, recorded_query: str | None = None, **fields) -> Outcome:
+        """Shared tail of both searches: register, label, judge novelty, report."""
+        had_prior_search = session.has_searched
+        new = [item for item in results if item.chunk.chunk_id not in session.ledger.results]
+        labels = session.ledger.register(results, ranked=True)
+        session.note_search(key, recorded_query or query)
+        status, message = self._novelty(new, had_prior_search)
+        cards = [_card(item, rank, label) for rank, (item, label) in enumerate(zip(results, labels), 1)]
+        return Outcome(
+            ToolStep(name, status, query=query,
+                     candidate_ids=tuple(item.chunk.chunk_id for item in results),
+                     candidate_cards=tuple(_trace_cards(cards, results))),
+            {"tool": name, "status": status, "query": query, "results": cards, "message": message, **fields},
+        )
+
+    def _read_chunks(self, session: _Session, arguments: dict) -> Outcome:
+        ids = _resolve_all(session.ledger, arguments.get("labels"))
+        if not ids:
+            return _reject("read_chunks",
+                           "labels must be labels of previously retrieved evidence, such as S1",
+                           "unknown labels")
+        results = self.tools.read_chunks(ids)
+        session.mark_opened(results)
+        return Outcome(
+            ToolStep("read_chunks", "ok", chunk_ids=tuple(ids),
+                     candidate_ids=tuple(item.chunk.chunk_id for item in results)),
+            {"tool": "read_chunks", "status": "ok",
+             "chunks": [_opened_card(session.ledger, item) for item in results]},
+        )
+
+    def _get_related_chunks(self, session: _Session, arguments: dict) -> Outcome:
+        chunk_id = session.ledger.resolve(arguments.get("label"))
+        if chunk_id is None or chunk_id not in session.opened:
+            return _reject("get_related_chunks", "label must refer to an opened chunk", "chunk not opened")
+        results = self.tools.related_chunks(chunk_id)
+        # A positional neighbour has no similarity score of its own. It inherits
+        # the anchor's, which is honest about why it is here.
+        session.ledger.register(results, ranked=False, score=session.ledger.results[chunk_id].score)
+        session.mark_opened(results)
+        return Outcome(
+            ToolStep("get_related_chunks", "ok", chunk_ids=(chunk_id,),
+                     candidate_ids=tuple(item.chunk.chunk_id for item in results)),
+            {"tool": "get_related_chunks", "status": "ok", "label": session.ledger.label(chunk_id),
+             "chunks": [_opened_card(session.ledger, item) for item in results]},
+        )
+
+    def _final(self, session: _Session, arguments: dict) -> Outcome:
+        ids = [chunk_id for chunk_id in _resolve_all(session.ledger, arguments.get("selected"))
+               if chunk_id in session.opened]
+        if not ids:
+            return _reject("final", "final requires the labels of one or more opened chunks",
+                           "no opened evidence selected")
+        selected = self._rank(session.opened[chunk_id] for chunk_id in dict.fromkeys(ids))
+        unverified = arguments.get("unverified_points")
+        return Outcome(
+            ToolStep("final", "ok", selected_chunk_ids=tuple(item.chunk.chunk_id for item in selected)),
+            evidence=selected,
+            trace_status="partial" if isinstance(unverified, list) and unverified else "answered",
+        )
+
+    # -- policy -------------------------------------------------------------
+
+    def _novelty(self, new: list[RetrievalResult], had_prior_search: bool) -> tuple[str, str | None]:
+        if not new:
+            return "no_new_evidence", "No new chunks were found beyond earlier searches."
+        if had_prior_search and len(new) < self.min_new_chunks:
+            return "low_novelty", ("This search mostly repeats evidence you already have. "
+                                   "Investigate a different aspect of the question or finalize.")
+        return "ok", None
+
+    def _rank(self, results) -> list[RetrievalResult]:
+        """Order evidence by score and cap it.
+
+        The grounding layer gates on the leading result's score, so the model's
+        listing order must never decide which chunk that is.
+        """
+        return sorted(results, key=lambda item: item.score, reverse=True)[:self.max_evidence]
+
+    # -- prompt -------------------------------------------------------------
 
     def _prompt(self, question: str, observations: list[dict]) -> str:
         return f'''You are a documentation research agent. You never answer the user directly. Investigate only through your tools, then select the final evidence.
@@ -190,210 +468,4 @@ Rules:
 - Do not repeat a rejected or already-completed search.
 
 Tool observations so far:
-{json.dumps(self._compact(observations), ensure_ascii=False)}'''
-
-    @staticmethod
-    def _compact(observations: list[dict]) -> list[dict]:
-        """Drop excerpt bodies from every search except the most recent one.
-
-        Ranked excerpts are leads. Once the model has moved past a search, the
-        excerpt text of chunks it never opened is dead weight that grows the
-        prompt on every turn. Labels, titles and headings stay so earlier
-        results remain addressable; opened chunk text is never touched.
-        """
-        latest = max((index for index, item in enumerate(observations)
-                      if item.get("tool") in _SEARCH_TOOLS and item.get("status") in _SEARCH_RESULT_STATUSES),
-                     default=-1)
-        return [
-            {**item, "results": [_compact_card(card) for card in item["results"]]}
-            if index != latest and item.get("tool") in _SEARCH_TOOLS and "results" in item else item
-            for index, item in enumerate(observations)
-        ]
-
-    def retrieve(self, question: str) -> list[RetrievalResult]:
-        started = perf_counter()
-        queries: list[str] = []
-        query_keys: set[str] = set()
-        observations: list[dict] = []
-        ledger = _Ledger()
-        opened: dict[str, RetrievalResult] = {}
-        steps: list[ToolStep] = []
-        stop_reason = "agent_unavailable"
-
-        while True:
-            if len(steps) >= self.max_steps:
-                stop_reason = "step_budget_exhausted"
-                break
-            if perf_counter() - started >= self.deadline_seconds:
-                stop_reason = "request_deadline_reached"
-                break
-            if len(steps) == self.max_steps - 1:
-                # Left alone, the model keeps reformulating searches until the
-                # budget runs out and the harness has to guess its evidence.
-                # Spend the last step on a deliberate selection instead.
-                observations.append({
-                    "tool": "agent_protocol", "status": "final_step",
-                    "message": "This is your last step. Return a final action selecting the opened evidence "
-                               "that answers the question, and list anything still unverified.",
-                })
-
-            # A provider that cannot produce a tool call raises. There is no
-            # degraded path here: a broken protocol is an outage, not an answer.
-            call = self.provider.call_tool(self._prompt(question, observations), TOOLS)
-            name, action = call.name, call.arguments
-            if name == "search_docs":
-                query = action.get("query")
-                normalized = _normal_query(query) if isinstance(query, str) else ""
-                if not normalized:
-                    observations.append({"tool": name, "status": "rejected", "message": "query must be a non-empty string"})
-                    steps.append(ToolStep(name, "rejected", detail="empty query"))
-                    continue
-                if normalized in query_keys:
-                    observations.append({"tool": name, "status": "rejected_duplicate", "query": query,
-                                         "message": "This search repeats a prior query. Make it more specific or finalize."})
-                    steps.append(ToolStep(name, "rejected_duplicate", query=query))
-                    continue
-                had_prior_search = bool(queries)
-                results = self.tools.retrieve(query, self.candidates_per_search)
-                new = [item for item in results if item.chunk.chunk_id not in ledger.results]
-                labels = ledger.register(results, ranked=True)
-                query_keys.add(normalized)
-                queries.append(query)
-                status, message = self._novelty(new, had_prior_search)
-                cards = [_card(item, rank, label) for rank, (item, label) in enumerate(zip(results, labels), 1)]
-                observations.append({"tool": name, "status": status, "query": query, "results": cards, "message": message})
-                steps.append(ToolStep(name, status, query=query,
-                                      candidate_ids=tuple(item.chunk.chunk_id for item in results),
-                                      candidate_cards=tuple(self._trace_cards(cards, results))))
-                continue
-
-            if name == "read_chunks":
-                requested = action.get("labels")
-                ids = self._resolve_all(ledger, requested)
-                if not ids:
-                    observations.append({"tool": name, "status": "rejected",
-                                         "message": "labels must be labels of previously retrieved evidence, such as S1"})
-                    steps.append(ToolStep(name, "rejected", detail="unknown labels"))
-                    continue
-                results = self.tools.read_chunks(ids)
-                # Reading exposes full text but must not make a low-ranked chunk
-                # look stronger than its retrieval evidence, so the ledger's
-                # score of record wins over the retriever's placeholder.
-                for item in results:
-                    opened[item.chunk.chunk_id] = ledger.results.get(item.chunk.chunk_id, item)
-                observations.append({"tool": name, "status": "ok", "chunks": [
-                    {"label": ledger.label(item.chunk.chunk_id), "title": item.chunk.source_title,
-                     "url": item.chunk.source_url, "heading": " > ".join(item.chunk.heading_path),
-                     "text": item.chunk.text}
-                    for item in results
-                ]})
-                steps.append(ToolStep(name, "ok", chunk_ids=tuple(ids),
-                                      candidate_ids=tuple(item.chunk.chunk_id for item in results)))
-                continue
-
-            if name == "get_related_chunks":
-                chunk_id = ledger.resolve(action.get("label"))
-                if chunk_id is None or chunk_id not in opened:
-                    observations.append({"tool": name, "status": "rejected", "message": "label must refer to an opened chunk"})
-                    steps.append(ToolStep(name, "rejected", detail="chunk not opened"))
-                    continue
-                results = self.tools.related_chunks(chunk_id)
-                # A positional neighbour has no similarity score of its own. It
-                # inherits the anchor's, which is honest about why it is here.
-                anchor_score = ledger.results[chunk_id].score
-                ledger.register(results, ranked=False, score=anchor_score)
-                for item in results:
-                    opened[item.chunk.chunk_id] = ledger.results[item.chunk.chunk_id]
-                observations.append({"tool": name, "status": "ok", "label": ledger.label(chunk_id), "chunks": [
-                    {"label": ledger.label(item.chunk.chunk_id), "heading": " > ".join(item.chunk.heading_path),
-                     "text": item.chunk.text}
-                    for item in results
-                ]})
-                steps.append(ToolStep(name, "ok", chunk_ids=(chunk_id,),
-                                      candidate_ids=tuple(item.chunk.chunk_id for item in results)))
-                continue
-
-            if name == "search_within_document":
-                anchor = ledger.resolve(action.get("source"))
-                query = action.get("query")
-                normalized = _normal_query(query) if isinstance(query, str) else ""
-                if anchor is None or not normalized:
-                    observations.append({"tool": name, "status": "rejected",
-                                         "message": "use the label of retrieved evidence as source and a non-empty query"})
-                    steps.append(ToolStep(name, "rejected", detail="invalid document search"))
-                    continue
-                source_url = ledger.results[anchor].chunk.source_url
-                key = f"document:{source_url}:{normalized}"
-                if key in query_keys:
-                    observations.append({"tool": name, "status": "rejected_duplicate",
-                                         "message": "This in-document search repeats a prior query."})
-                    steps.append(ToolStep(name, "rejected_duplicate", query=query))
-                    continue
-                had_prior_search = bool(queries)
-                results = self.tools.search_within_document(source_url, query, self.candidates_per_search)
-                new = [item for item in results if item.chunk.chunk_id not in ledger.results]
-                labels = ledger.register(results, ranked=True)
-                query_keys.add(key)
-                queries.append(f"within {source_url}: {query}")
-                status, message = self._novelty(new, had_prior_search)
-                cards = [_card(item, rank, label) for rank, (item, label) in enumerate(zip(results, labels), 1)]
-                observations.append({"tool": name, "status": status, "query": query, "source_url": source_url,
-                                     "results": cards, "message": message})
-                steps.append(ToolStep(name, status, query=query,
-                                      candidate_ids=tuple(item.chunk.chunk_id for item in results),
-                                      candidate_cards=tuple(self._trace_cards(cards, results))))
-                continue
-
-            if name == "final":
-                requested = action.get("selected")
-                ids = [chunk_id for chunk_id in self._resolve_all(ledger, requested) if chunk_id in opened]
-                if not ids:
-                    observations.append({"tool": name, "status": "rejected",
-                                         "message": "final requires the labels of one or more opened chunks"})
-                    steps.append(ToolStep(name, "rejected", detail="no opened evidence selected"))
-                    continue
-                selected = self._rank(opened[chunk_id] for chunk_id in dict.fromkeys(ids))
-                unverified = action.get("unverified_points")
-                status = "partial" if isinstance(unverified, list) and unverified else "answered"
-                chosen_ids = tuple(item.chunk.chunk_id for item in selected)
-                steps.append(ToolStep(name, "ok", selected_chunk_ids=chosen_ids))
-                self.last_trace = RetrievalTrace(tuple(queries), chosen_ids, status, tuple(steps), "agent_satisfied")
-                return selected
-
-            observations.append({"tool": "agent", "status": "rejected",
-                                 "message": "unknown tool; call one of the declared tools"})
-            steps.append(ToolStep("agent", "rejected", detail=f"unknown tool {name!r}"))
-
-        selected = self._rank(opened.values())
-        status = "partial" if selected else "fallback"
-        self.last_trace = RetrievalTrace(tuple(queries), tuple(item.chunk.chunk_id for item in selected), status,
-                                          tuple(steps), stop_reason)
-        return selected
-
-    def _novelty(self, new: list[RetrievalResult], had_prior_search: bool) -> tuple[str, str | None]:
-        if not new:
-            return "no_new_evidence", "No new chunks were found beyond earlier searches."
-        if had_prior_search and len(new) < self.min_new_chunks:
-            return "low_novelty", ("This search mostly repeats evidence you already have. "
-                                   "Investigate a different aspect of the question or finalize.")
-        return "ok", None
-
-    def _rank(self, results) -> list[RetrievalResult]:
-        """Order evidence by score and cap it.
-
-        The grounding layer gates on the leading result's score, so the model's
-        listing order must never decide which chunk that is.
-        """
-        return sorted(results, key=lambda item: item.score, reverse=True)[:self.max_evidence]
-
-    @staticmethod
-    def _resolve_all(ledger: _Ledger, requested) -> list[str]:
-        if not isinstance(requested, list):
-            return []
-        resolved = (ledger.resolve(value) for value in requested)
-        return [chunk_id for chunk_id in resolved if chunk_id is not None]
-
-    @staticmethod
-    def _trace_cards(cards: list[dict], results: list[RetrievalResult]) -> list[dict]:
-        """Trace records keep the chunk ID that the prompt deliberately omits."""
-        return [{**card, "chunk_id": item.chunk.chunk_id} for card, item in zip(cards, results)]
+{json.dumps(_compact(observations), ensure_ascii=False)}'''
