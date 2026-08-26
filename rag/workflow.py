@@ -61,7 +61,7 @@ def refresh_sources(
                 f"({len(chunks)} total).",
                 flush=True,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             # A changed page structure is a per-document failure; it must not
             # cancel a refresh of every other official source.
             from rag.models import Document

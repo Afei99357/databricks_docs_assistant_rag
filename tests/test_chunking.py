@@ -11,7 +11,7 @@ def test_chunking_preserves_heading_context_and_stable_ids():
 
 
 def test_chunking_keeps_paragraphs_and_tables_together_before_fallback_split():
-    table = " | ".join(["column", "value"])
+    table = "column | value"
     nodes = [{"type": "heading", "level": 1, "text": "Reference"},
              {"type": "paragraph", "text": "First complete paragraph."},
              {"type": "paragraph", "text": "Second complete paragraph."},

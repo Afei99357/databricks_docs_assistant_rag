@@ -29,7 +29,7 @@ class Settings:
         return f"/Volumes/{self.catalog}/{self.schema}/{self.artifact_volume}"
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         required = ("RAG_CATALOG", "RAG_SCHEMA", "RAG_WAREHOUSE_ID")
         missing = [name for name in required if not os.getenv(name)]
         if missing:

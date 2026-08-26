@@ -37,8 +37,11 @@ def _split_text(text: str, config: ChunkingConfig) -> list[str]:
     return chunks
 
 
+DEFAULT_CHUNKING = ChunkingConfig()
+
+
 def chunk_document(*, doc_id: str, document_version: str, source_url: str, source_title: str,
-                   nodes: list[dict], config: ChunkingConfig = ChunkingConfig()) -> list[Chunk]:
+                   nodes: list[dict], config: ChunkingConfig = DEFAULT_CHUNKING) -> list[Chunk]:
     """Chunk by section, keeping headings with each body block where possible."""
     headings: list[str] = []
     sections: list[tuple[tuple[str, ...], list[str]]] = []

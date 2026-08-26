@@ -35,22 +35,22 @@ The local server uses Ollama for answer generation and embeddings, and a local F
 for retrieval. It still uses the configured Databricks SQL warehouse for the governed document,
 history, and feedback tables.
 
+Every command below is a [`just`](https://github.com/casey/just) recipe. Run `just` on its own
+to list them. The recipes load `.env` themselves, so no `set -a` / `source` step is needed.
+
 1. Install the locked project dependencies and create a private environment file:
 
    ```bash
-   uv sync --extra dev
+   just sync
    cp .env.example .env
    ```
 
-   Install and build the Preact browser application once (and again after any
-   frontend changes). Flask serves the compiled files, so this build is also
-   required before a Databricks App Bundle deploy:
+   Build the Preact browser application once, and again after any frontend
+   change. Flask serves the compiled files, so this build is also required
+   before a Databricks App Bundle deploy:
 
    ```bash
-   cd frontend
-   npm install
-   npm run build
-   cd ..
+   just frontend
    ```
 
 2. Edit `.env`. At minimum, configure your Databricks profile/catalog/schema/warehouse and set:
@@ -63,38 +63,45 @@ history, and feedback tables.
    OLLAMA_MODEL=qwen3.5:latest
    ```
 
-   Load those settings into the current terminal before running any `rag.cli` command:
-
-   ```bash
-   set -a
-   source .env
-   set +a
-   ```
-
 3. Start Ollama and make sure both local models are available:
 
    ```bash
-   ollama pull qwen3-embedding:4b
-   ollama pull qwen3.5:latest
+   just models
    ```
 
 4. Create the governed tables/Volume, fetch and chunk the configured sources, and build the
    local Ollama-backed FAISS snapshot:
 
    ```bash
-   uv run python -m rag.cli setup-db
-   uv run python -m rag.cli build-local-snapshot
+   just setup-db
+   just index
    ```
 
 5. Start the local application and open `http://127.0.0.1:8000`:
 
    ```bash
-   uv run python -m rag.cli serve
+   just serve
    ```
 
-Run `uv run python -m rag.cli build-local-snapshot` again whenever you want to refresh the
-configured documentation sources and rebuild the local index. In a new terminal, load `.env`
-again with the three `set -a`/`source`/`set +a` commands above before using the CLI.
+Run `just index` again whenever you want to refresh the configured documentation sources and
+rebuild the local index.
+
+## Measuring retrieval quality
+
+`rag/evaluation_cases.yaml` holds 25 questions, each naming the one page its answer must come
+from. `just eval` runs the battery and prints a row per question — where the expected page
+ranked, how many chunks came back, how long it took — then recall and mean reciprocal rank.
+Recall says the evidence was retrieved at all; reciprocal rank says whether it was near the top,
+which is the difference an investigating agent is meant to make over a single search.
+
+```bash
+just eval plain   # one search per question
+just eval agent   # the tool-using retrieval agent (default)
+just eval-both    # both, to see what the agent's extra latency buys
+```
+
+A question whose retrieval raises is recorded as a failure and the run continues, so one bad
+case cannot cost you the other 24 measurements.
 
 The local server uses Ollama and a local FAISS directory. It does not use the Databricks App
 service principal, OBO identity, or hosted model endpoints.
@@ -118,23 +125,15 @@ Authenticate a CLI profile for the target workspace:
 databricks auth login --host https://<workspace-host> --profile <profile>
 ```
 
-Choose values once and use the same values for every command below:
-
-```bash
-export RAG_PROFILE=<profile>
-export RAG_CATALOG=<catalog>
-export RAG_SCHEMA=<schema>
-export RAG_WAREHOUSE_ID=<warehouse-id>
-export RAG_VOLUME=rag_artifacts
-export RAG_EMBEDDING_ENDPOINT=databricks-qwen3-embedding-0-6b
-export RAG_CHAT_ENDPOINT=databricks-gpt-oss-20b
-```
+Set the workspace values once, in `.env`: `RAG_DATABRICKS_PROFILE`, `RAG_CATALOG`, `RAG_SCHEMA`,
+`RAG_WAREHOUSE_ID`, `RAG_ARTIFACT_VOLUME`, `RAG_DATABRICKS_EMBEDDING_ENDPOINT`,
+`DATABRICKS_CHAT_ENDPOINT`, `RAG_APP_NAME`, and `RAG_APP_SOURCE_PATH`. Every deployment recipe
+reads them from there, so no workspace value is repeated in a command.
 
 Confirm both endpoints exist before continuing:
 
 ```bash
-databricks serving-endpoints get "$RAG_EMBEDDING_ENDPOINT" --profile "$RAG_PROFILE"
-databricks serving-endpoints get "$RAG_CHAT_ENDPOINT" --profile "$RAG_PROFILE"
+just endpoints
 ```
 
 If the catalog/schema differs from `eliao.genie_kb`, update the three corresponding values in
@@ -146,17 +145,7 @@ If the catalog/schema differs from `eliao.genie_kb`, update the three correspond
 From the repository root, validate and synchronize the source files to the target workspace:
 
 ```bash
-(
-  cd bootstrap
-  databricks bundle validate --target dev --profile "$RAG_PROFILE" \
-  --var "catalog=$RAG_CATALOG" --var "schema=$RAG_SCHEMA" \
-  --var "artifact_volume=$RAG_VOLUME" --var "warehouse_id=$RAG_WAREHOUSE_ID" \
-  --var "embedding_endpoint=$RAG_EMBEDDING_ENDPOINT"
-  databricks bundle deploy --target dev --profile "$RAG_PROFILE" \
-    --var "catalog=$RAG_CATALOG" --var "schema=$RAG_SCHEMA" \
-    --var "artifact_volume=$RAG_VOLUME" --var "warehouse_id=$RAG_WAREHOUSE_ID" \
-    --var "embedding_endpoint=$RAG_EMBEDDING_ENDPOINT"
-)
+just bootstrap-deploy
 ```
 
 This deploys the Job-only bootstrap Bundle and uploads all needed project files. It creates the
@@ -167,11 +156,7 @@ Workflow `databricks-docs-rag-refresh-dev`.
 After deployment, run the Bundle-managed Workflow from **Workflows**, or run:
 
 ```bash
-(cd bootstrap && databricks bundle run refresh_databricks_docs_index --target dev \
-  --profile "$RAG_PROFILE" --var "catalog=$RAG_CATALOG" \
-  --var "schema=$RAG_SCHEMA" --var "artifact_volume=$RAG_VOLUME" \
-  --var "warehouse_id=$RAG_WAREHOUSE_ID" \
-  --var "embedding_endpoint=$RAG_EMBEDDING_ENDPOINT")
+just bootstrap-run
 ```
 
 Wait for success. This idempotently creates the catalog, schema, all Delta
@@ -188,11 +173,7 @@ the Terraform deployment engine as a compatibility workaround for a current
 Databricks CLI direct-engine crash when creating Apps with resource bindings:
 
 ```bash
-databricks bundle deploy --target dev --profile "$RAG_PROFILE" \
-  --var "catalog=$RAG_CATALOG" --var "schema=$RAG_SCHEMA" \
-  --var "artifact_volume=$RAG_VOLUME" --var "warehouse_id=$RAG_WAREHOUSE_ID" \
-  --var "embedding_endpoint=$RAG_EMBEDDING_ENDPOINT" \
-  --var "reasoning_endpoint=$RAG_CHAT_ENDPOINT"
+just app-deploy
 ```
 
 The Bundle uploads the source and creates the App with its resource bindings.
@@ -201,18 +182,13 @@ deployment from that uploaded source (replace the email address with the Bundle
 deployer's workspace user):
 
 ```bash
-export RAG_APP_NAME=databricks-docs-rag-dev
-export RAG_APP_SOURCE_PATH="/Workspace/Users/<your-email>/.bundle/databricks-docs-rag/dev/files"
-
-databricks apps start "$RAG_APP_NAME" --profile "$RAG_PROFILE"
-databricks apps deploy "$RAG_APP_NAME" --profile "$RAG_PROFILE" \
-  --source-code-path "$RAG_APP_SOURCE_PATH" --mode SNAPSHOT
+just app-start
 ```
 
 Wait for the deployment to complete, then confirm its URL and running status:
 
 ```bash
-databricks apps get "$RAG_APP_NAME" --profile "$RAG_PROFILE"
+just app-status
 ```
 
 The Bundle creates the App and configures these service-principal resources:
@@ -244,55 +220,23 @@ FAISS snapshot is still valid—for example, when deploying a UI, retrieval,
 grounding, or request-tracing change. Your local app may remain running; these
 commands operate only on the workspace copy.
 
-From the repository root, load the private workspace settings and create any
-new Delta tables introduced by the release:
+One recipe does the whole sequence — build the browser assets, create any new Delta tables
+introduced by the release, deploy the Bundle resource configuration, publish that uploaded
+source to the existing App, and report its status:
 
 ```bash
-set -a
-source .env
-set +a
-
-uv run python -m rag.cli setup-db
+just deploy-code
 ```
 
-Build the browser assets, deploy the Bundle resource configuration, then
-publish that uploaded source to the existing App. `.env` calls the CLI profile
-`RAG_DATABRICKS_PROFILE`, so the commands map it to the Bundle variable names
-explicitly:
-
-```bash
-cd frontend
-npm run build
-cd ..
-
-databricks bundle deploy --target dev --profile "$RAG_DATABRICKS_PROFILE" \
-  --var "catalog=$RAG_CATALOG" \
-  --var "schema=$RAG_SCHEMA" \
-  --var "artifact_volume=$RAG_ARTIFACT_VOLUME" \
-  --var "warehouse_id=$RAG_WAREHOUSE_ID" \
-  --var "embedding_endpoint=$RAG_DATABRICKS_EMBEDDING_ENDPOINT" \
-  --var "reasoning_endpoint=$DATABRICKS_CHAT_ENDPOINT"
-
-databricks apps deploy databricks-docs-rag-dev \
-  --profile "$RAG_DATABRICKS_PROFILE" \
-  --source-code-path "/Workspace/Users/<your-email>/.bundle/databricks-docs-rag/dev/files" \
-  --mode SNAPSHOT
-
-databricks apps get databricks-docs-rag-dev \
-  --profile "$RAG_DATABRICKS_PROFILE"
-```
-
-Replace `<your-email>` with the workspace user who ran `bundle deploy` (for
-example, `ericliaoyf@gmail.com`). `setup-db` only applies idempotent schema
-creation, and none of these commands crawl sources, create embeddings, or
+`RAG_APP_SOURCE_PATH` must name the workspace user who ran `bundle deploy`. `setup-db` only
+applies idempotent schema creation, and none of these commands crawl sources, create embeddings, or
 replace the active FAISS snapshot.
 
-To update documentation, run the bootstrap Bundle's Workflow again from **Workflows** (or use
-the `databricks bundle run` command above). It creates a new
+To update documentation, run the bootstrap Bundle's Workflow again from **Workflows** (or run `just bootstrap-run`). It creates a new
 validated snapshot and atomically marks it active; the previous active snapshot remains usable if
 the refresh fails.
 
-To deploy code/configuration changes, redeploy the App Bundle command above. If the ingestion
+To deploy code/configuration changes, run `just deploy-code`. If the ingestion
 code, SQL schema, source configuration, or embedding endpoint changed, redeploy the bootstrap
 Bundle, run its Workflow, then redeploy the App Bundle. Do not rebuild a local
 Ollama snapshot for the Databricks App; the App snapshot must use the configured Databricks
