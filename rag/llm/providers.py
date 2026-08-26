@@ -1,5 +1,12 @@
 """Answer-provider interface for local Ollama and Databricks serving endpoints.
 
+Both providers speak the OpenAI chat-completions protocol, so the request and
+response handling lives in one place and only the client construction differs:
+Ollama exposes ``/v1`` directly, while Databricks builds a client against the
+workspace credentials. Talking one protocol keeps the two runtimes at parity —
+a change to the conversation or the tool schemas cannot work on one and quietly
+break the other.
+
 Two call shapes, deliberately separate:
 
 ``complete`` asks for prose and is used for grounded answers, where free text
@@ -17,8 +24,6 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Protocol
-
-import requests
 
 
 @dataclass(frozen=True)
@@ -43,7 +48,7 @@ def _response_text(content) -> str:
             elif getattr(item, "type", None) == "text" and isinstance(getattr(item, "text", None), str):
                 parts.append(item.text)
         return "\n".join(parts).strip()
-    raise RuntimeError("Databricks chat endpoint returned an unsupported message-content format")
+    raise RuntimeError("chat endpoint returned an unsupported message-content format")
 
 
 def _client_config_kwargs(profile: str | None, timeout: float) -> dict:
@@ -62,13 +67,13 @@ def _client_config_kwargs(profile: str | None, timeout: float) -> dict:
 def _tool_call_from_openai(message) -> ToolCall:
     """Normalize an OpenAI-shaped assistant turn.
 
-    The OpenAI wire format carries ``arguments`` as a JSON string produced by a
-    constrained decoder; Ollama hands back a dict. Each provider normalizes to a
-    dict so callers never decode anything themselves.
+    ``arguments`` arrives as a JSON string produced by the runtime's constrained
+    decoder, so it is well-formed by construction rather than scraped out of
+    prose. Decoding it here means callers never parse anything themselves.
     """
     tool_calls = getattr(message, "tool_calls", None)
     if not tool_calls:
-        raise RuntimeError("the serving endpoint returned no tool call")
+        raise RuntimeError("the serving endpoint returned prose instead of a tool call")
     call = tool_calls[0]
     return ToolCall(call.function.name, json.loads(call.function.arguments),
                     call_id=call.id, message=message.model_dump(exclude_none=True))
@@ -81,57 +86,64 @@ class AnswerProvider(Protocol):
     def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall: ...
 
 
-class OllamaProvider:
+class _OpenAIChatProvider:
+    """Chat-completions calls shared by every runtime that speaks the protocol."""
+
+    model: str
+    extra_body: dict
+
+    def _client(self):
+        raise NotImplementedError
+
+    def _create(self, messages: list[dict], **kwargs):
+        return self._client().chat.completions.create(
+            model=self.model, messages=messages, extra_body=self.extra_body, **kwargs,
+        )
+
+    def complete(self, prompt: str) -> str:
+        completion = self._create([{"role": "user", "content": prompt}])
+        return _response_text(completion.choices[0].message.content)
+
+    def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall:
+        # tool_choice="required" is honoured by Databricks and ignored by
+        # Ollama, which is why the agent's system prompt also states the
+        # contract in words. Asking for it costs nothing where it works.
+        completion = self._create(messages, tools=tools, tool_choice="required")
+        return _tool_call_from_openai(completion.choices[0].message)
+
+
+class OllamaProvider(_OpenAIChatProvider):
     name = "ollama"
 
     def __init__(self, base_url: str, model: str, timeout: float = 90):
-        self.base_url, self.model, self.timeout = base_url.rstrip("/"), model, timeout
+        self.model, self.timeout = model, timeout
+        self.base_url = base_url.rstrip("/") + "/v1"
+        # Ollama exposes its reasoning toggle as a vendor extension rather than
+        # an OpenAI parameter. Leaving it on roughly doubles per-turn latency
+        # without measurably improving tool selection.
+        self.extra_body = {"think": False}
+        self._cached = None
 
-    def complete(self, prompt: str) -> str:
-        response = requests.post(f"{self.base_url}/api/generate", json={"model": self.model, "prompt": prompt, "stream": False, "think": False}, timeout=self.timeout)
-        response.raise_for_status()
-        return response.json()["response"].strip()
-
-    def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall:
-        response = requests.post(f"{self.base_url}/api/chat", json={
-            "model": self.model, "stream": False, "think": False, "tools": tools,
-            "messages": messages,
-        }, timeout=self.timeout)
-        response.raise_for_status()
-        message = response.json().get("message") or {}
-        calls = message.get("tool_calls")
-        if not calls:
-            raise RuntimeError(f"{self.model} returned prose instead of a tool call")
-        function = calls[0]["function"]
-        return ToolCall(function["name"], function.get("arguments") or {},
-                        call_id=calls[0].get("id"), message=message)
+    def _client(self):
+        if self._cached is None:
+            from openai import OpenAI
+            # Ollama ignores the key but the client insists on one.
+            self._cached = OpenAI(base_url=self.base_url, api_key="ollama", timeout=self.timeout)
+        return self._cached
 
 
-class DatabricksEndpointProvider:
+class DatabricksEndpointProvider(_OpenAIChatProvider):
     name = "databricks"
 
     def __init__(self, endpoint: str, *, profile: str | None = None, timeout: float = 90):
         self.model, self.profile, self.timeout = endpoint, profile, timeout
+        self.extra_body = {}
+        self._cached = None
 
-    def _workspace(self):
-        from databricks.sdk import WorkspaceClient
-        from databricks.sdk.core import Config
-        return WorkspaceClient(config=Config(**_client_config_kwargs(self.profile, self.timeout)))
-
-    def complete(self, prompt: str) -> str:
-        from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
-        response = self._workspace().serving_endpoints.query(
-            name=self.model,
-            messages=[ChatMessage(role=ChatMessageRole.USER, content=prompt)],
-        )
-        return _response_text(response.choices[0].message.content)
-
-    def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall:
-        # The typed serving_endpoints.query API exposes no tools/response_format
-        # parameter, so tool calling goes through the OpenAI-compatible client
-        # the SDK builds against the same workspace credentials.
-        client = self._workspace().serving_endpoints.get_open_ai_client(timeout=self.timeout)
-        completion = client.chat.completions.create(
-            model=self.model, tools=tools, tool_choice="required", messages=messages,
-        )
-        return _tool_call_from_openai(completion.choices[0].message)
+    def _client(self):
+        if self._cached is None:
+            from databricks.sdk import WorkspaceClient
+            from databricks.sdk.core import Config
+            workspace = WorkspaceClient(config=Config(**_client_config_kwargs(self.profile, self.timeout)))
+            self._cached = workspace.serving_endpoints.get_open_ai_client(timeout=self.timeout)
+        return self._cached
