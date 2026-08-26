@@ -115,6 +115,7 @@ def serve() -> None:
         trace_sink=DatabricksRequestTraceSink(
             store, f"{settings.namespace}.rag_request_traces", provider=provider.name, model=provider.model,
             retrieval_table=f"{settings.namespace}.rag_retrieval_traces",
+            agent_provider=agent_provider.name, agent_model=agent_provider.model,
         ),
     ).run(host="127.0.0.1", port=int(os.getenv("PORT", "8000")), debug=False)
 

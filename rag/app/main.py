@@ -48,6 +48,7 @@ def create_databricks_app():
         trace_sink=DatabricksRequestTraceSink(
             store, f"{settings.namespace}.rag_request_traces", provider=provider.name, model=provider.model,
             retrieval_table=f"{settings.namespace}.rag_retrieval_traces",
+            agent_provider=provider.name, agent_model=provider.model,
         ),
     )
 

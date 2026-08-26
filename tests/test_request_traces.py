@@ -18,6 +18,7 @@ def test_request_trace_records_evidence_and_grounding_diagnostics():
     DatabricksRequestTraceSink(
         store, "catalog.schema.rag_request_traces", provider="ollama", model="qwen",
         retrieval_table="catalog.schema.rag_retrieval_traces",
+        agent_provider="openai-compatible", agent_model="muse",
     ).record(
         turn_id="turn", conversation_id="conversation", owner="user", question="What is it?",
         resolved_query="What is it?", retrieval_trace=RetrievalTrace(
@@ -34,5 +35,7 @@ def test_request_trace_records_evidence_and_grounding_diagnostics():
     assert "selected_evidence_json" in statement
     assert "tool_steps" in statement
     assert "agent_satisfied" in statement
+    assert "openai-compatible" in statement
+    assert "muse" in statement
     assert "INSERT INTO catalog.schema.rag_retrieval_traces" in store.statements[1]
     assert "Answer [S1]." in statement

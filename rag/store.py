@@ -96,9 +96,12 @@ class DatabricksRequestTraceSink:
     """Persist final-answer diagnostics without storing the full model prompt."""
 
     def __init__(self, store: DatabricksStore, table: str, *, provider: str, model: str,
-                 retrieval_table: str | None = None):
+                 retrieval_table: str | None = None, agent_provider: str | None = None,
+                 agent_model: str | None = None):
         self.store, self.table, self.provider, self.model = store, table, provider, model
         self.retrieval_table = retrieval_table
+        self.agent_provider = agent_provider or provider
+        self.agent_model = agent_model or model
 
     def record(self, *, turn_id: str | None, conversation_id: str | None, owner: str | None,
                question: str, resolved_query: str, retrieval_trace, results, grounding_trace,
@@ -128,6 +131,8 @@ class DatabricksRequestTraceSink:
                 "selected_chunk_ids": selected, "evidence": evidence,
                 "tool_steps": steps,
                 "stop_reason": getattr(retrieval_trace, "stop_reason", None),
+                "agent_provider": self.agent_provider,
+                "agent_model": self.agent_model,
             }),
             "raw_model_output": grounding_trace.raw_model_output,
             "parsed_citation_labels": "array(" + ",".join(sql_literal(value) for value in grounding_trace.parsed_citation_labels) + ")",
