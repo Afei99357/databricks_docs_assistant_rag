@@ -1,15 +1,17 @@
 bundle:
-  name: databricks-docs-rag
+  name: databricks-docs-rag-bootstrap
 
 include:
-  - resources/apps.yml
+  - ../resources/ingestion_job.yml
 
 sync:
+  paths:
+    - ..
   exclude:
-    - tmp
-    - .env
-    - .venv/**
-    - data/**
+    - ../tmp
+    - ../.env
+    - ../.venv/**
+    - ../data/**
 
 variables:
   catalog:
@@ -19,12 +21,10 @@ variables:
   artifact_volume:
     default: rag_artifacts
   warehouse_id:
-    description: SQL warehouse used for Delta history and feedback.
+    description: SQL warehouse used for bootstrap DDL and source storage.
     default: ""
   embedding_endpoint:
     default: databricks-qwen3-embedding-0-6b
-  reasoning_endpoint:
-    default: databricks-gpt-oss-20b
 
 targets:
   dev:

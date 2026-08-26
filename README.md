@@ -99,50 +99,54 @@ If the catalog/schema differs from `eliao.genie_kb`, update the three correspond
 From the repository root, validate and synchronize the source files to the target workspace:
 
 ```bash
-databricks bundle validate --target dev --profile "$RAG_PROFILE" \
+(
+  cd bootstrap
+  databricks bundle validate --target dev --profile "$RAG_PROFILE" \
+  --var "catalog=$RAG_CATALOG" --var "schema=$RAG_SCHEMA" \
+  --var "artifact_volume=$RAG_VOLUME" --var "warehouse_id=$RAG_WAREHOUSE_ID" \
+  --var "embedding_endpoint=$RAG_EMBEDDING_ENDPOINT"
+  databricks bundle deploy --target dev --profile "$RAG_PROFILE" \
+    --var "catalog=$RAG_CATALOG" --var "schema=$RAG_SCHEMA" \
+    --var "artifact_volume=$RAG_VOLUME" --var "warehouse_id=$RAG_WAREHOUSE_ID" \
+    --var "embedding_endpoint=$RAG_EMBEDDING_ENDPOINT"
+)
+```
+
+This deploys the Job-only bootstrap Bundle and uploads all needed project files. It creates the
+Workflow `databricks-docs-rag-refresh-dev`.
+
+### 3. Create and run the bootstrap Workflow
+
+After deployment, run the Bundle-managed Workflow from **Workflows**, or run:
+
+```bash
+(cd bootstrap && databricks bundle run refresh_databricks_docs_index --target dev \
+  --profile "$RAG_PROFILE" --var "catalog=$RAG_CATALOG" \
+  --var "schema=$RAG_SCHEMA" --var "artifact_volume=$RAG_VOLUME" \
+  --var "warehouse_id=$RAG_WAREHOUSE_ID" \
+  --var "embedding_endpoint=$RAG_EMBEDDING_ENDPOINT")
+```
+
+Wait for success. This idempotently creates the catalog, schema, all Delta
+tables, and Volume; refreshes the configured sources; and writes the active App snapshot under
+`rag_artifacts/app-qwen3-embedding-0-6b/`. Inspect the task output before proceeding.
+
+For a brand-new workspace, the Job must run first: the App's resource bindings cannot be created
+until its tables and Volume exist.
+
+### 4. Create and deploy the App
+
+Deploy the App-only Bundle after the bootstrap run succeeds:
+
+```bash
+databricks bundle deploy --target dev --profile "$RAG_PROFILE" \
   --var "catalog=$RAG_CATALOG" --var "schema=$RAG_SCHEMA" \
   --var "artifact_volume=$RAG_VOLUME" --var "warehouse_id=$RAG_WAREHOUSE_ID" \
   --var "embedding_endpoint=$RAG_EMBEDDING_ENDPOINT" \
   --var "reasoning_endpoint=$RAG_CHAT_ENDPOINT"
-
-databricks bundle sync --target dev --profile "$RAG_PROFILE"
 ```
 
-The command synchronizes to
-`/Workspace/Users/<your-user>/.bundle/databricks-docs-rag/dev/files`; use that exact path (shown
-by the CLI for your account) as the synchronized repository folder below.
-
-### 3. Create and run the bootstrap Workflow
-
-In **Workflows → Create job**, create a serverless **Python script** task named
-`refresh_and_publish`.
-
-- Python file: `rag/jobs/refresh_app_index.py` from the synchronized bundle folder.
-- Environment dependency: the synchronized repository folder containing `pyproject.toml`.
-- Timeout: 3,600 seconds.
-- Task parameters (replace the placeholders):
-
-```text
---catalog <catalog>
---schema <schema>
---warehouse-id <warehouse-id>
---artifact-volume rag_artifacts
---embedding-endpoint databricks-qwen3-embedding-0-6b
---schema-sql-path <synchronized-repository-folder>/sql/001_rag_schema.sql
-```
-
-Click **Run now** and wait for success. This idempotently creates the catalog, schema, all Delta
-tables, and Volume; refreshes the configured sources; and writes the active App snapshot under
-`rag_artifacts/app-qwen3-embedding-0-6b/`. Inspect the task output before proceeding.
-
-The bundle also contains this Job definition in [`resources/ingestion_job.yml`](resources/ingestion_job.yml).
-For a brand-new workspace, create the bootstrap Job first as described above: the App's resource
-bindings cannot be created until its tables and Volume exist.
-
-### 4. Create and deploy the App
-
-In **Apps → Create app**, use the same synchronized repository folder as the source. Configure
-these resources for the App service principal:
+The Bundle creates the App and configures these service-principal resources:
 
 | Resource | Permission |
 | --- | --- |
@@ -158,13 +162,14 @@ user's conversation owner. The deployed App does not read your local `.env` file
 
 ### 5. Refresh or redeploy later
 
-To update documentation, run the existing Workflow again from **Workflows**. It creates a new
+To update documentation, run the bootstrap Bundle's Workflow again from **Workflows** (or use
+the `databricks bundle run` command above). It creates a new
 validated snapshot and atomically marks it active; the previous active snapshot remains usable if
 the refresh fails.
 
-To deploy code/configuration changes, synchronize again, then redeploy the App from its source
-folder. If the ingestion code, SQL schema, source configuration, or embedding endpoint changed,
-run the Workflow after synchronization and before redeploying the App. Do not rebuild a local
+To deploy code/configuration changes, redeploy the App Bundle command above. If the ingestion
+code, SQL schema, source configuration, or embedding endpoint changed, redeploy the bootstrap
+Bundle, run its Workflow, then redeploy the App Bundle. Do not rebuild a local
 Ollama snapshot for the Databricks App; the App snapshot must use the configured Databricks
 embedding endpoint.
 
