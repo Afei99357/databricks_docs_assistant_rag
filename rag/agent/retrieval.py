@@ -8,6 +8,15 @@ returns a tool name and an arguments object directly. Nothing here scavenges
 JSON out of prose, and there is no repair path for malformed output: a provider
 that cannot produce a tool call raises, rather than degrading quietly.
 
+The loop is a single growing conversation, not a series of one-shot prompts.
+Each assistant turn and each tool result is appended verbatim, so every request
+is a strict extension of the previous one and the serving runtime can reuse its
+cached prefix instead of re-reading the whole transcript each turn.
+
+That is why nothing here rewrites an earlier turn. Trimming superseded search
+excerpts would shrink the transcript but invalidate the cache from the point of
+the edit onwards, which costs more than it saves.
+
 Evidence is addressed by short per-request labels (``S1``, ``S2``) rather than
 by chunk ID, so a slip is an invalid *reference* the harness rejects precisely
 rather than a corrupted identifier.
@@ -80,8 +89,6 @@ TOOLS = [
 ]
 
 _WORDS = re.compile(r"[a-z0-9]+")
-_SEARCH_TOOLS = frozenset({"search_docs", "search_within_document"})
-_SEARCH_RESULT_STATUSES = frozenset({"ok", "low_novelty", "no_new_evidence"})
 
 
 def _normal_query(value: str) -> str:
@@ -144,10 +151,6 @@ def _card(item: RetrievalResult, rank: int, label: str) -> dict:
     }
 
 
-def _compact_card(card: dict) -> dict:
-    return {"label": card["label"], "title": card["title"], "heading": card["heading"]}
-
-
 def _opened_card(ledger: _Ledger, item: RetrievalResult) -> dict:
     return {"label": ledger.label(item.chunk.chunk_id), "title": item.chunk.source_title,
             "url": item.chunk.source_url, "heading": " > ".join(item.chunk.heading_path),
@@ -166,22 +169,11 @@ def _resolve_all(ledger: _Ledger, requested) -> list[str]:
     return [chunk_id for chunk_id in resolved if chunk_id is not None]
 
 
-def _compact(observations: list[dict]) -> list[dict]:
-    """Drop excerpt bodies from every search except the most recent one.
-
-    Ranked excerpts are leads. Once the model has moved past a search, the
-    excerpt text of chunks it never opened is dead weight that grows the prompt
-    on every turn. Labels, titles and headings stay so earlier results remain
-    addressable; opened chunk text is never touched.
-    """
-    latest = max((index for index, item in enumerate(observations)
-                  if item.get("tool") in _SEARCH_TOOLS and item.get("status") in _SEARCH_RESULT_STATUSES),
-                 default=-1)
-    return [
-        {**item, "results": [_compact_card(card) for card in item["results"]]}
-        if index != latest and item.get("tool") in _SEARCH_TOOLS and "results" in item else item
-        for index, item in enumerate(observations)
-    ]
+def _assistant_turn(call) -> dict:
+    """Reconstruct an assistant turn for providers that return only the call."""
+    return {"role": "assistant", "tool_calls": [
+        {"id": call.call_id, "type": "function",
+         "function": {"name": call.name, "arguments": call.arguments}}]}
 
 
 def _reject(name: str, message: str, detail: str) -> Outcome:
@@ -194,6 +186,17 @@ def _reject_duplicate(name: str, query, message: str) -> Outcome:
     return Outcome(ToolStep(name, "rejected_duplicate", query=query),
                    {"tool": name, "status": "rejected_duplicate", "query": query, "message": message})
 
+
+# The terminal rule is load-bearing, not decoration. Without it the model
+# treats "respond using the evidence" as licence to write the answer itself,
+# and returns prose instead of a tool call: measured at 4/4 investigations
+# failing without it and 0/8 with it. Ollama ignores tool_choice, so the
+# prompt is the only place this contract can live.
+SYSTEM_PROMPT = ("You are a documentation research agent. Investigate the dataset using tools, "
+                 "and respond using the evidence returned. You never write the answer yourself: "
+                 "end the investigation by calling the final tool with the labels of the evidence "
+                 "that answers the question. Every retrieved excerpt has a short label such as S1; "
+                 "refer to evidence only by label.")
 
 FINAL_STEP_MESSAGE = ("This is your last step. Return a final action selecting the opened evidence "
                       "that answers the question, and list anything still unverified.")
@@ -222,14 +225,20 @@ class _Session:
 
     The loop and every handler share exactly this object. Adding a tool means
     writing a handler, not threading another local through the loop.
+
+    ``conversation`` is append-only by construction: nothing here offers a way
+    to revise a turn once it has been sent.
     """
 
-    def __init__(self):
+    def __init__(self, question: str):
         self.ledger = _Ledger()
         self.opened: dict[str, RetrievalResult] = {}
         self.queries: list[str] = []
-        self.observations: list[dict] = []
         self.steps: list[ToolStep] = []
+        self.conversation: list[dict] = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Question: {question}"},
+        ]
         self._query_keys: set[str] = set()
 
     @property
@@ -254,12 +263,18 @@ class _Session:
             self.opened[item.chunk.chunk_id] = self.ledger.results.get(item.chunk.chunk_id, item)
 
     def notice(self, status: str, message: str) -> None:
-        self.observations.append({"tool": "agent_protocol", "status": status, "message": message})
+        self.conversation.append({"role": "user", "content": json.dumps(
+            {"status": status, "message": message}, ensure_ascii=False)})
 
-    def record(self, outcome: Outcome) -> None:
+    def record(self, call, outcome: Outcome) -> None:
+        """Append the assistant turn and its tool result, in that order."""
         self.steps.append(outcome.step)
+        self.conversation.append(call.message or _assistant_turn(call))
         if outcome.observation is not None:
-            self.observations.append(outcome.observation)
+            self.conversation.append({
+                "role": "tool", "tool_call_id": call.call_id,
+                "content": json.dumps(outcome.observation, ensure_ascii=False),
+            })
 
 
 class RetrievalAgent:
@@ -296,7 +311,7 @@ class RetrievalAgent:
     # -- the loop -----------------------------------------------------------
 
     def retrieve(self, question: str) -> list[RetrievalResult]:
-        session = _Session()
+        session = _Session(question)
         started = perf_counter()
         while True:
             stop_reason = self._stop_reason(session, started)
@@ -306,9 +321,9 @@ class RetrievalAgent:
                 session.notice("final_step", FINAL_STEP_MESSAGE)
             # A provider that cannot produce a tool call raises. There is no
             # degraded path here: a broken protocol is an outage, not an answer.
-            call = self.provider.call_tool(self._prompt(question, session.observations), TOOLS)
+            call = self.provider.call_tool(session.conversation, TOOLS)
             outcome = self._dispatch(session, call)
-            session.record(outcome)
+            session.record(call, outcome)
             if outcome.evidence is not None:
                 return self._conclude(session, "agent_satisfied", outcome)
 
@@ -447,25 +462,3 @@ class RetrievalAgent:
         listing order must never decide which chunk that is.
         """
         return sorted(results, key=lambda item: item.score, reverse=True)[:self.max_evidence]
-
-    # -- prompt -------------------------------------------------------------
-
-    def _prompt(self, question: str, observations: list[dict]) -> str:
-        return f'''You are a documentation research agent. You never answer the user directly. Investigate only through your tools, then select the final evidence.
-
-Question: {question}
-
-Every retrieved excerpt has a short label such as S1. Refer to evidence only by label.
-
-Rules:
-- Begin by calling search_docs; do not finalize without opened evidence.
-- Search results are ranked. Prefer high-ranked, direct evidence. Use lower-ranked evidence only when it directly covers a gap.
-- Read a chunk before selecting it as final evidence. Search snippets are leads, not proof.
-- If evidence is incomplete, investigate the missing fact with a more specific query, inspect related chunks, or search within the relevant document.
-- Never select a label that was not opened through a tool.
-- Finalize as soon as the opened evidence covers the question. Reformulating a search that returns the same excerpts wastes the step budget.
-- When remaining documentation cannot be found, finalize the supported evidence and list the missing item in unverified_points.
-- Do not repeat a rejected or already-completed search.
-
-Tool observations so far:
-{json.dumps(_compact(observations), ensure_ascii=False)}'''

@@ -1,3 +1,6 @@
+import copy
+import json
+
 import pytest
 
 from rag.agent.retrieval import RetrievalAgent
@@ -17,16 +20,20 @@ IDS = {
 class Provider:
     def __init__(self, calls):
         self.calls = iter(calls)
-        self.prompts = []
+        self.turns = []
         self.declared_tools = []
 
     def complete(self, prompt):
         raise AssertionError("the retrieval agent must not use free-text completion")
 
-    def call_tool(self, prompt, tools):
-        self.prompts.append(prompt)
+    def call_tool(self, messages, tools):
+        # Snapshot, because the agent keeps extending the same list.
+        self.turns.append(copy.deepcopy(messages))
         self.declared_tools.append(tools)
         return next(self.calls)
+
+    def text_at(self, turn):
+        return json.dumps(self.turns[turn], ensure_ascii=False)
 
 
 def _result(name, *, text="evidence", url="https://docs.databricks.com/x", position=0, score=.9):
@@ -103,9 +110,9 @@ def test_observations_address_evidence_by_label_and_never_expose_chunk_ids():
                          ToolCall("read_chunks", {"labels": ["S1"]}),
                          ToolCall("final", {"selected": ["S1"]})])
     RetrievalAgent(tools, provider).retrieve("question")
-    assert '"label": "S1"' in provider.prompts[1]
-    assert IDS["generic"] not in provider.prompts[1]
-    assert IDS["generic"] not in provider.prompts[2]
+    assert '\\"label\\": \\"S1\\"' in provider.text_at(1) or '"label": "S1"' in provider.text_at(1)
+    assert IDS["generic"] not in provider.text_at(1)
+    assert IDS["generic"] not in provider.text_at(2)
 
 
 def test_agent_rejects_final_evidence_that_was_not_opened():
@@ -270,23 +277,7 @@ def test_a_search_that_mostly_repeats_earlier_evidence_is_reported_as_low_novelt
     assert agent.last_trace.steps[1].status == "low_novelty"
 
 
-def test_superseded_search_results_are_compacted_out_of_the_prompt():
-    tools = Tools()
-    provider = Provider([
-        ToolCall("search_docs", {"query": "broad question"}),
-        ToolCall("search_docs", {"query": "specific permission"}),
-        ToolCall("read_chunks", {"labels": ["S2"]}),
-        ToolCall("final", {"selected": ["S2"]}),
-    ])
-    RetrievalAgent(tools, provider).retrieve("question")
-    # The first search's excerpts survive only while that search is the latest
-    # one; afterwards the label and title remain but the body text does not.
-    assert "generic evidence" in provider.prompts[1]
-    assert "generic evidence" not in provider.prompts[2]
-    assert '"S1"' in provider.prompts[2]
-
-
-def test_opened_chunk_text_is_never_compacted_away():
+def test_the_conversation_is_append_only():
     tools = Tools()
     provider = Provider([
         ToolCall("search_docs", {"query": "broad question"}),
@@ -295,7 +286,34 @@ def test_opened_chunk_text_is_never_compacted_away():
         ToolCall("final", {"selected": ["S1"]}),
     ])
     RetrievalAgent(tools, provider).retrieve("question")
-    assert "generic evidence" in provider.prompts[3]
+    # Every request must be a strict extension of the one before it. Rewriting
+    # an earlier turn would invalidate the serving runtime's cached prefix.
+    assert len(provider.turns) == 4
+    for earlier, later in zip(provider.turns, provider.turns[1:]):
+        assert later[:len(earlier)] == earlier
+        assert len(later) > len(earlier)
+
+
+def test_the_conversation_opens_with_a_system_prompt_and_the_question():
+    tools = Tools()
+    provider = Provider([ToolCall("search_docs", {"query": "broad question"}),
+                         ToolCall("read_chunks", {"labels": ["S1"]}),
+                         ToolCall("final", {"selected": ["S1"]})])
+    RetrievalAgent(tools, provider).retrieve("a hard question")
+    opening = provider.turns[0]
+    assert [message["role"] for message in opening] == ["system", "user"]
+    assert "a hard question" in opening[1]["content"]
+
+
+def test_each_tool_result_is_appended_as_a_tool_message_after_its_call():
+    tools = Tools()
+    provider = Provider([ToolCall("search_docs", {"query": "broad question"}),
+                         ToolCall("read_chunks", {"labels": ["S1"]}),
+                         ToolCall("final", {"selected": ["S1"]})])
+    RetrievalAgent(tools, provider).retrieve("question")
+    roles = [message["role"] for message in provider.turns[-1]]
+    assert roles == ["system", "user", "assistant", "tool", "assistant", "tool"]
+    assert "generic evidence" in provider.turns[-1][-1]["content"]
 
 
 def test_agent_is_told_to_finalize_on_its_last_step():
@@ -309,7 +327,7 @@ def test_agent_is_told_to_finalize_on_its_last_step():
     assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"]]
     # Without this the model keeps reformulating searches until the budget runs
     # out and the harness has to guess the evidence for it.
-    assert "final_step" in provider.prompts[2]
+    assert "final_step" in provider.text_at(2)
     assert agent.last_trace.stop_reason == "agent_satisfied"
 
 
@@ -321,4 +339,4 @@ def test_the_finalize_notice_is_not_issued_while_steps_remain():
         ToolCall("final", {"selected": ["S1"]}),
     ])
     RetrievalAgent(tools, provider, max_steps=8).retrieve("question")
-    assert "final_step" not in provider.prompts[2]
+    assert "final_step" not in provider.text_at(2)
