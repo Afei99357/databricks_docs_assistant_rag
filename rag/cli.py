@@ -8,6 +8,8 @@ from pathlib import Path
 
 from rag.agent.retrieval import RetrievalAgent
 from rag.config import Settings
+from rag.evaluate import evaluate as run_evaluation
+from rag.evaluate import format_header, format_row, format_summary, load_cases
 from rag.history import ConversationRepository
 from rag.identity import LocalTestIdentityProvider
 from rag.index.embeddings import OllamaEmbeddingProvider
@@ -51,13 +53,12 @@ def setup_db() -> None:
     print(f"initialized {settings.namespace}")
 
 
-def serve() -> None:
-    settings = Settings.from_env()
+def _local_stack(settings: Settings):
+    """The retriever and answer provider the local commands share."""
     root = os.getenv("RAG_LOCAL_INDEX_DIR")
     if not root:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to downloaded local snapshot artifacts")
     embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.ollama_base_url)
-    retriever = ActiveSnapshotRetriever(root, embedder, settings.top_k)
     provider = (
         OllamaProvider(settings.ollama_base_url, settings.ollama_model)
         if settings.answer_provider == "ollama"
@@ -65,6 +66,29 @@ def serve() -> None:
             settings.databricks_chat_endpoint, profile=settings.databricks_profile
         )
     )
+    return ActiveSnapshotRetriever(root, embedder, settings.top_k), provider
+
+
+def evaluate(mode: str) -> None:
+    """Run the question battery and print the per-case table."""
+    settings = Settings.from_env()
+    retriever, provider = _local_stack(settings)
+    retrieve = (retriever.retrieve if mode == "plain"
+                else RetrievalAgent(retriever, provider).retrieve)
+    cases = load_cases()
+    print(f"evaluating {len(cases)} questions against {mode} retrieval", flush=True)
+    print(format_header(), flush=True)
+    # Cases are printed as they finish: an agent run takes minutes, and a table
+    # that only appears at the end is a table nobody watches.
+    counter = iter(range(1, len(cases) + 1))
+    report = run_evaluation(cases, retrieve,
+                            on_case=lambda outcome: print(format_row(next(counter), outcome), flush=True))
+    print(format_summary(report))
+
+
+def serve() -> None:
+    settings = Settings.from_env()
+    retriever, provider = _local_stack(settings)
     from rag.app.web import create_app
 
     store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
@@ -145,6 +169,9 @@ def main() -> None:
     commands.add_parser("discover", help="fetch and list official source URLs")
     commands.add_parser("setup-db", help="create configured Delta tables and artifact Volume")
     commands.add_parser("serve", help="serve the active local snapshot through Flask")
+    evaluation = commands.add_parser("evaluate", help="run the question battery and report retrieval quality")
+    evaluation.add_argument("--mode", choices=("agent", "plain"), default="agent",
+                            help="investigate with the retrieval agent, or run one plain search per question")
     commands.add_parser(
         "build-app-snapshot",
         help="build and activate a Databricks-embedding snapshot in the artifact Volume",
@@ -154,6 +181,8 @@ def main() -> None:
         help="refresh sources and build an Ollama-embedding local FAISS snapshot",
     )
     args = parser.parse_args()
+    if args.command == "evaluate":
+        return evaluate(args.mode)
     {
         "discover": discover,
         "setup-db": setup_db,
