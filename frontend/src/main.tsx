@@ -105,8 +105,13 @@ function App() {
 
   const refreshHistory = async () => {
     const body = await json<{ conversations: Conversation[] }>("/api/conversations");
-    setConversations([...body.conversations].reverse());
+    const rows = [...body.conversations].reverse();
+    setConversations(rows);
+    return rows;
   };
+  useEffect(() => {
+    refreshHistory().then((rows) => { if (rows.length) setHistoryOpen(true); }).catch(() => undefined);
+  }, []);
   const openHistory = async () => {
     const next = !historyOpen; setHistoryOpen(next); setError("");
     if (next) { try { await refreshHistory(); } catch (reason) { setError((reason as Error).message); } }
