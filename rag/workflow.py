@@ -41,7 +41,10 @@ def refresh_sources(
 ) -> list[Chunk]:
     """Fetch/extract/persist official docs, returning active chunks for a local build."""
     chunks: list[Chunk] = []
-    for source in official_sources():
+    sources = official_sources()
+    print(f"Discovered {len(sources)} documentation pages to refresh.", flush=True)
+    for number, source in enumerate(sources, start=1):
+        print(f"[{number}/{len(sources)}] Fetching {source.requested_url}", flush=True)
         try:
             item = ingest_source(source)
             store.upsert_document(document_table, item.document)
@@ -56,7 +59,12 @@ def refresh_sources(
             )
             store.replace_document_chunks(chunk_table, item.document, document_chunks)
             chunks.extend(document_chunks)
-        except Exception:
+            print(
+                f"[{number}/{len(sources)}] Indexed {len(document_chunks)} chunks "
+                f"({len(chunks)} total).",
+                flush=True,
+            )
+        except Exception as exc:
             # A changed page structure is a per-document failure; it must not
             # cancel a refresh of every other official source.
             from rag.models import Document
@@ -76,6 +84,7 @@ def refresh_sources(
                 None,
             )
             store.upsert_document(document_table, item.document)
+            print(f"[{number}/{len(sources)}] Failed: {exc}", flush=True)
     return chunks
 
 
