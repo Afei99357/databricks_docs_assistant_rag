@@ -3,12 +3,14 @@
 The agent may investigate the indexed documentation, but it never writes the
 user-facing answer. Evidence selection stays separate from final grounding.
 
+The model drives the loop through native tool calls, so the serving runtime
+returns a tool name and an arguments object directly. Nothing here scavenges
+JSON out of prose, and there is no repair path for malformed output: a provider
+that cannot produce a tool call raises, rather than degrading quietly.
+
 Evidence is addressed by short per-request labels (``S1``, ``S2``) rather than
-by chunk ID. Making a model retype a 24-character hex identifier is the single
-most fragile part of a text tool protocol: a one-character slip inside a long
-opaque string surfaces as unparseable JSON, and the whole turn is lost. A short
-label makes a slip an invalid *reference*, which the harness can reject with a
-precise message instead.
+by chunk ID, so a slip is an invalid *reference* the harness rejects precisely
+rather than a corrupted identifier.
 """
 from __future__ import annotations
 
@@ -49,6 +51,33 @@ class RetrievalTrace:
     steps: tuple[ToolStep, ...] = ()
     stop_reason: str | None = None
 
+
+def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
+    return {"type": "function", "function": {
+        "name": name, "description": description,
+        "parameters": {"type": "object", "properties": properties, "required": required},
+    }}
+
+
+LABEL = {"type": "string", "description": "A label of retrieved evidence, such as S1."}
+LABELS = {"type": "array", "items": LABEL}
+
+TOOLS = [
+    _tool("search_docs", "Search the indexed documentation for evidence.",
+          {"query": {"type": "string", "description": "A specific documentation search."}}, ["query"]),
+    _tool("read_chunks", "Open the full text of retrieved evidence before selecting it.",
+          {"labels": LABELS}, ["labels"]),
+    _tool("get_related_chunks", "Read the sections immediately around an opened chunk.",
+          {"label": LABEL}, ["label"]),
+    _tool("search_within_document", "Search inside the document an opened chunk came from.",
+          {"source": LABEL, "query": {"type": "string", "description": "A specific section search."}},
+          ["source", "query"]),
+    _tool("final", "Select the opened evidence that answers the question.",
+          {"selected": LABELS,
+           "unverified_points": {"type": "array", "items": {"type": "string"},
+                                 "description": "Parts of the question the evidence does not establish."}},
+          ["selected"]),
+]
 
 _WORDS = re.compile(r"[a-z0-9]+")
 _SEARCH_TOOLS = frozenset({"search_docs", "search_within_document"})
@@ -124,8 +153,7 @@ class RetrievalAgent:
 
     def __init__(self, tools: RetrievalTools | Callable[[str, int], list[RetrievalResult]], provider,
                  *, candidates_per_search: int = 10, deadline_seconds: float = 240,
-                 max_steps: int = 12, max_evidence: int = 8, max_repairs: int = 2,
-                 min_new_chunks: int = 2):
+                 max_steps: int = 12, max_evidence: int = 8, min_new_chunks: int = 2):
         # The callable adapter keeps small unit-test fakes usable. Production
         # supplies an ActiveSnapshotRetriever or VolumeSnapshotRetriever.
         if callable(tools) and not hasattr(tools, "retrieve"):
@@ -141,32 +169,25 @@ class RetrievalAgent:
         self.tools, self.provider = tools, provider
         self.candidates_per_search, self.deadline_seconds = candidates_per_search, deadline_seconds
         self.max_steps, self.max_evidence = max_steps, max_evidence
-        self.max_repairs, self.min_new_chunks = max_repairs, min_new_chunks
+        self.min_new_chunks = min_new_chunks
         self.last_trace: RetrievalTrace | None = None
 
     def _prompt(self, question: str, observations: list[dict]) -> str:
-        return f'''You are a documentation research agent. You never answer the user directly. Investigate only through the tools below, then return a final evidence selection.
+        return f'''You are a documentation research agent. You never answer the user directly. Investigate only through your tools, then select the final evidence.
 
 Question: {question}
 
 Every retrieved excerpt has a short label such as S1. Refer to evidence only by label.
-
-Tools (return JSON only, with exactly one action):
-1. {{"action":"search_docs","query":"specific documentation search"}}
-2. {{"action":"read_chunks","labels":["S1"]}}
-3. {{"action":"get_related_chunks","label":"S1"}}
-4. {{"action":"search_within_document","source":"S1","query":"specific section search"}}
-5. {{"action":"final","selected":["S1"],"unverified_points":["optional unsupported part"]}}
 
 Rules:
 - Begin by calling search_docs; do not finalize without opened evidence.
 - Search results are ranked. Prefer high-ranked, direct evidence. Use lower-ranked evidence only when it directly covers a gap.
 - Read a chunk before selecting it as final evidence. Search snippets are leads, not proof.
 - If evidence is incomplete, investigate the missing fact with a more specific query, inspect related chunks, or search within the relevant document.
-- Never cite a label that was not opened through a tool.
+- Never select a label that was not opened through a tool.
 - Finalize as soon as the opened evidence covers the question. Reformulating a search that returns the same excerpts wastes the step budget.
 - When remaining documentation cannot be found, finalize the supported evidence and list the missing item in unverified_points.
-- Do not repeat a rejected or already-completed search. Return JSON only.
+- Do not repeat a rejected or already-completed search.
 
 Tool observations so far:
 {json.dumps(self._compact(observations), ensure_ascii=False)}'''
@@ -189,26 +210,6 @@ Tool observations so far:
             for index, item in enumerate(observations)
         ]
 
-    @staticmethod
-    def _parse_action(response: str) -> dict:
-        """Return the first complete JSON action object in the response.
-
-        ``raw_decode`` stops at the end of the first valid object, so commentary
-        or a second object after a well-formed action cannot corrupt the parse.
-        """
-        decoder = json.JSONDecoder()
-        text = response.strip()
-        for index, character in enumerate(text):
-            if character != "{":
-                continue
-            try:
-                value, _ = decoder.raw_decode(text, index)
-            except ValueError:
-                continue
-            if isinstance(value, dict) and "action" in value:
-                return value
-        raise ValueError("no valid JSON action object was found in the response")
-
     def retrieve(self, question: str) -> list[RetrievalResult]:
         started = perf_counter()
         queries: list[str] = []
@@ -217,7 +218,6 @@ Tool observations so far:
         ledger = _Ledger()
         opened: dict[str, RetrievalResult] = {}
         steps: list[ToolStep] = []
-        repairs = 0
         stop_reason = "agent_unavailable"
 
         while True:
@@ -237,33 +237,10 @@ Tool observations so far:
                                "that answers the question, and list anything still unverified.",
                 })
 
-            try:
-                response = self.provider.complete(self._prompt(question, observations))
-            except Exception as exc:  # noqa: BLE001 - provider implementations expose no common error base.
-                stop_reason = "provider_error"
-                steps.append(ToolStep("agent", "error", detail=str(exc)))
-                break
-
-            try:
-                action = self._parse_action(response)
-            except ValueError as exc:
-                # Handled entirely in memory: the model gets one compact
-                # correction and another attempt. Nothing is persisted, so
-                # recovery never depends on the optional trace tables.
-                repairs += 1
-                steps.append(ToolStep("agent", "invalid_action", detail=str(exc)))
-                if repairs >= self.max_repairs:
-                    stop_reason = "invalid_action_protocol"
-                    break
-                observations.append({
-                    "tool": "agent_protocol", "status": "invalid_json",
-                    "message": "Your previous response was not valid JSON. Return exactly one JSON action object "
-                               "and no surrounding text. Refer to evidence by label, such as S1.",
-                })
-                continue
-            repairs = 0
-
-            name = action.get("action")
+            # A provider that cannot produce a tool call raises. There is no
+            # degraded path here: a broken protocol is an outage, not an answer.
+            call = self.provider.call_tool(self._prompt(question, observations), TOOLS)
+            name, action = call.name, call.arguments
             if name == "search_docs":
                 query = action.get("query")
                 normalized = _normal_query(query) if isinstance(query, str) else ""
@@ -383,8 +360,9 @@ Tool observations so far:
                 self.last_trace = RetrievalTrace(tuple(queries), chosen_ids, status, tuple(steps), "agent_satisfied")
                 return selected
 
-            observations.append({"tool": "agent", "status": "rejected", "message": "unknown action; use one documented tool or final"})
-            steps.append(ToolStep("agent", "rejected", detail=f"unknown action {name!r}"))
+            observations.append({"tool": "agent", "status": "rejected",
+                                 "message": "unknown tool; call one of the declared tools"})
+            steps.append(ToolStep("agent", "rejected", detail=f"unknown tool {name!r}"))
 
         selected = self._rank(opened.values())
         status = "partial" if selected else "fallback"

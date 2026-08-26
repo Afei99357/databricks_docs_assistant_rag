@@ -1,6 +1,12 @@
 import pytest
 
-from rag.llm.providers import _client_config_kwargs, _response_text
+from rag.llm.providers import (
+    OllamaProvider,
+    ToolCall,
+    _client_config_kwargs,
+    _response_text,
+    _tool_call_from_openai,
+)
 
 
 def test_response_text_accepts_plain_string():
@@ -28,3 +34,57 @@ def test_databricks_client_config_bounds_the_request_and_retry_timeouts():
 
 def test_databricks_client_config_keeps_the_configured_profile():
     assert _client_config_kwargs("free-workspace", 45)["profile"] == "free-workspace"
+
+
+class _FakeResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self.payload
+
+
+def test_ollama_provider_returns_a_native_tool_call(monkeypatch):
+    captured = {}
+
+    def fake_post(url, json=None, timeout=None):
+        captured["url"], captured["body"] = url, json
+        return _FakeResponse({"message": {"tool_calls": [
+            {"function": {"name": "final", "arguments": {"selected": ["S1", "S4"]}}}]}})
+
+    monkeypatch.setattr("rag.llm.providers.requests.post", fake_post)
+    tools = [{"type": "function", "function": {"name": "final", "parameters": {}}}]
+    call = OllamaProvider("http://localhost:11434", "qwen").call_tool("decide", tools)
+
+    assert call == ToolCall("final", {"selected": ["S1", "S4"]})
+    # The tool-calling endpoint, not the free-text completion endpoint.
+    assert captured["url"].endswith("/api/chat")
+    assert captured["body"]["tools"] == tools
+    assert captured["body"]["messages"] == [{"role": "user", "content": "decide"}]
+
+
+def test_ollama_provider_raises_when_the_model_answers_without_calling_a_tool(monkeypatch):
+    monkeypatch.setattr("rag.llm.providers.requests.post",
+                        lambda url, json=None, timeout=None: _FakeResponse({"message": {"content": "I think S1."}}))
+    with pytest.raises(RuntimeError, match="tool call"):
+        OllamaProvider("http://localhost:11434", "qwen").call_tool("decide", [])
+
+
+def test_openai_tool_call_arguments_are_decoded_by_the_provider():
+    # The OpenAI wire format delivers arguments as a JSON string; Ollama
+    # delivers a dict. Providers normalize so the agent never decodes anything.
+    class Function:
+        name, arguments = "read_chunks", '{"labels": ["S1", "S2"]}'
+
+    class Call:
+        function = Function()
+
+    assert _tool_call_from_openai([Call()]) == ToolCall("read_chunks", {"labels": ["S1", "S2"]})
+
+
+def test_openai_tool_call_raises_when_no_tool_was_called():
+    with pytest.raises(RuntimeError, match="tool call"):
+        _tool_call_from_openai(None)

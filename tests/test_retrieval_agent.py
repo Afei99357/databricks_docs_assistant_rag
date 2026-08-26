@@ -1,10 +1,11 @@
 import pytest
 
 from rag.agent.retrieval import RetrievalAgent
+from rag.llm.providers import ToolCall
 from rag.models import Chunk, RetrievalResult
 
-# Realistic opaque chunk IDs. The agent protocol must never require the model to
-# retype one of these; it addresses evidence by short label instead.
+# Realistic opaque chunk IDs. The agent protocol never asks the model to retype
+# one of these; it addresses evidence by short label instead.
 IDS = {
     "generic": "d2b162a114fec21dbe6e23c3",
     "permission": "e08a9338e087e3c41ccae492",
@@ -14,13 +15,18 @@ IDS = {
 
 
 class Provider:
-    def __init__(self, replies):
-        self.replies = iter(replies)
+    def __init__(self, calls):
+        self.calls = iter(calls)
         self.prompts = []
+        self.declared_tools = []
 
     def complete(self, prompt):
+        raise AssertionError("the retrieval agent must not use free-text completion")
+
+    def call_tool(self, prompt, tools):
         self.prompts.append(prompt)
-        return next(self.replies)
+        self.declared_tools.append(tools)
+        return next(self.calls)
 
 
 def _result(name, *, text="evidence", url="https://docs.databricks.com/x", position=0, score=.9):
@@ -61,14 +67,26 @@ class Tools:
         return self._emit([_result("within", text="specific section", url=source_url)])
 
 
+def test_agent_declares_every_tool_it_dispatches():
+    tools = Tools()
+    provider = Provider([ToolCall("search_docs", {"query": "broad question"}),
+                         ToolCall("read_chunks", {"labels": ["S1"]}),
+                         ToolCall("final", {"selected": ["S1"]})])
+    RetrievalAgent(tools, provider).retrieve("question")
+    declared = {tool["function"]["name"] for tool in provider.declared_tools[0]}
+    assert declared == {"search_docs", "read_chunks", "get_related_chunks",
+                        "search_within_document", "final"}
+    assert all(tool["type"] == "function" for tool in provider.declared_tools[0])
+
+
 def test_agent_searches_reads_then_selects_opened_evidence():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"search_docs","query":"specific permission"}',
-        '{"action":"read_chunks","labels":["S2"]}',
-        '{"action":"final","selected":["S1","S2"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("search_docs", {"query": "specific permission"}),
+        ToolCall("read_chunks", {"labels": ["S2"]}),
+        ToolCall("final", {"selected": ["S1", "S2"]}),
     ]))
     assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"], IDS["permission"]]
     assert tools.calls == [
@@ -81,14 +99,10 @@ def test_agent_searches_reads_then_selects_opened_evidence():
 
 def test_observations_address_evidence_by_label_and_never_expose_chunk_ids():
     tools = Tools()
-    provider = Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"final","selected":["S1"]}',
-    ])
+    provider = Provider([ToolCall("search_docs", {"query": "broad question"}),
+                         ToolCall("read_chunks", {"labels": ["S1"]}),
+                         ToolCall("final", {"selected": ["S1"]})])
     RetrievalAgent(tools, provider).retrieve("question")
-    # The prompt that had to carry the search result, and the one that had to
-    # carry the opened chunk, must both be free of the opaque identifier.
     assert '"label": "S1"' in provider.prompts[1]
     assert IDS["generic"] not in provider.prompts[1]
     assert IDS["generic"] not in provider.prompts[2]
@@ -97,10 +111,10 @@ def test_observations_address_evidence_by_label_and_never_expose_chunk_ids():
 def test_agent_rejects_final_evidence_that_was_not_opened():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"final","selected":["S1"]}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"final","selected":["S1"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("final", {"selected": ["S1"]}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("final", {"selected": ["S1"]}),
     ]))
     assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"]]
     assert agent.last_trace.steps[1].status == "rejected"
@@ -109,10 +123,10 @@ def test_agent_rejects_final_evidence_that_was_not_opened():
 def test_agent_rejects_duplicate_searches_without_calling_retriever_twice():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"search_docs","query":"Broad question!"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"final","selected":["S1"],"unverified_points":["limits"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("search_docs", {"query": "Broad question!"}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("final", {"selected": ["S1"], "unverified_points": ["limits"]}),
     ]))
     assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"]]
     assert [call for call in tools.calls if call[0] == "search_docs"] == [("search_docs", "broad question")]
@@ -123,10 +137,10 @@ def test_agent_rejects_duplicate_searches_without_calling_retriever_twice():
 def test_agent_can_open_related_chunks_by_label():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"get_related_chunks","label":"S1"}',
-        '{"action":"final","selected":["S2"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("get_related_chunks", {"label": "S1"}),
+        ToolCall("final", {"selected": ["S2"]}),
     ]))
     assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["neighbor"]]
     assert ("get_related_chunks", IDS["generic"]) in tools.calls
@@ -135,61 +149,43 @@ def test_agent_can_open_related_chunks_by_label():
 def test_search_within_document_resolves_a_label_to_its_source_url():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"search_within_document","source":"S1","query":"specific section"}',
-        '{"action":"read_chunks","labels":["S2"]}',
-        '{"action":"final","selected":["S2"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("search_within_document", {"source": "S1", "query": "specific section"}),
+        ToolCall("read_chunks", {"labels": ["S2"]}),
+        ToolCall("final", {"selected": ["S2"]}),
     ]))
     assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["within"]]
     assert ("search_within_document", "https://docs.databricks.com/x", "specific section") in tools.calls
 
 
-def test_agent_accepts_an_action_followed_by_trailing_prose():
+def test_agent_rejects_a_tool_name_it_does_not_implement():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"} I will start with a broad search.}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"final","selected":["S1"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("summarise_everything", {}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("final", {"selected": ["S1"]}),
     ]))
     assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"]]
-    assert ("search_docs", "broad question") in tools.calls
+    assert agent.last_trace.steps[1].status == "rejected"
 
 
-def test_malformed_action_becomes_an_in_memory_repair_observation():
-    tools = Tools()
-    provider = Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"final","selected":["S1","d2b162a114fec21d"be6e23c3"]}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"final","selected":["S1"]}',
-    ])
-    agent = RetrievalAgent(tools, provider)
-    assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"]]
-    assert agent.last_trace.steps[1].status == "invalid_action"
-    assert agent.last_trace.stop_reason == "agent_satisfied"
-    assert "invalid_json" in provider.prompts[2]
+def test_a_provider_failure_is_not_swallowed():
+    class Failing(Provider):
+        def call_tool(self, prompt, tools):
+            raise RuntimeError("qwen returned prose instead of a tool call")
 
-
-def test_consecutive_malformed_actions_end_retrieval_after_the_repair_budget():
-    tools = Tools()
-    agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        'sorry, I cannot produce that',
-        'still not JSON',
-    ]), max_repairs=2)
-    assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"]]
-    assert agent.last_trace.stop_reason == "invalid_action_protocol"
-    assert agent.last_trace.status == "partial"
+    with pytest.raises(RuntimeError, match="prose instead of a tool call"):
+        RetrievalAgent(Tools(), Failing([])).retrieve("question")
 
 
 def test_opening_related_chunks_preserves_the_anchor_retrieval_score():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"get_related_chunks","label":"S1"}',
-        '{"action":"final","selected":["S1","S2"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("get_related_chunks", {"label": "S1"}),
+        ToolCall("final", {"selected": ["S1", "S2"]}),
     ]))
     scores = {item.chunk.chunk_id: item.score for item in agent.retrieve("question")}
     # The anchor keeps its ranked score, and its neighbour inherits that score
@@ -201,10 +197,10 @@ def test_opening_related_chunks_preserves_the_anchor_retrieval_score():
 def test_final_evidence_is_returned_in_descending_score_order():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"search_docs","query":"specific permission"}',
-        '{"action":"read_chunks","labels":["S1","S2"]}',
-        '{"action":"final","selected":["S2","S1"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("search_docs", {"query": "specific permission"}),
+        ToolCall("read_chunks", {"labels": ["S1", "S2"]}),
+        ToolCall("final", {"selected": ["S2", "S1"]}),
     ]))
     # The grounding layer gates on results[0].score, so the strongest evidence
     # must lead regardless of the order the model listed it in.
@@ -214,20 +210,20 @@ def test_final_evidence_is_returned_in_descending_score_order():
 def test_final_evidence_is_capped_at_the_configured_maximum():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"search_docs","query":"specific permission"}',
-        '{"action":"read_chunks","labels":["S1","S2"]}',
-        '{"action":"final","selected":["S1","S2"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("search_docs", {"query": "specific permission"}),
+        ToolCall("read_chunks", {"labels": ["S1", "S2"]}),
+        ToolCall("final", {"selected": ["S1", "S2"]}),
     ]), max_evidence=1)
     assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"]]
 
 
-def test_fallback_evidence_is_ranked_and_capped_when_the_agent_never_finalizes():
+def test_evidence_is_ranked_and_capped_when_the_agent_never_finalizes():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"search_docs","query":"specific permission"}',
-        '{"action":"read_chunks","labels":["S1","S2"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("search_docs", {"query": "specific permission"}),
+        ToolCall("read_chunks", {"labels": ["S1", "S2"]}),
     ]), max_steps=3, max_evidence=1)
     assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"]]
     assert agent.last_trace.status == "partial"
@@ -236,9 +232,9 @@ def test_fallback_evidence_is_ranked_and_capped_when_the_agent_never_finalizes()
 def test_agent_stops_after_the_step_budget():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"get_related_chunks","label":"S1"}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("get_related_chunks", {"label": "S1"}),
     ]), max_steps=3)
     agent.retrieve("question")
     assert agent.last_trace.stop_reason == "step_budget_exhausted"
@@ -248,10 +244,10 @@ def test_agent_stops_after_the_step_budget():
 def test_reordered_search_terms_are_treated_as_a_duplicate_search():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"search_docs","query":"question broad"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"final","selected":["S1"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("search_docs", {"query": "question broad"}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("final", {"selected": ["S1"]}),
     ]))
     agent.retrieve("question")
     assert [call for call in tools.calls if call[0] == "search_docs"] == [("search_docs", "broad question")]
@@ -265,10 +261,10 @@ def test_a_search_that_mostly_repeats_earlier_evidence_is_reported_as_low_novelt
         _result("permission", text="SELECT is required", score=.88),
     ]
     agent = RetrievalAgent(tools, Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"search_docs","query":"restated question"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"final","selected":["S1"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("search_docs", {"query": "restated question"}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("final", {"selected": ["S1"]}),
     ]), min_new_chunks=2)
     agent.retrieve("question")
     assert agent.last_trace.steps[1].status == "low_novelty"
@@ -277,10 +273,10 @@ def test_a_search_that_mostly_repeats_earlier_evidence_is_reported_as_low_novelt
 def test_superseded_search_results_are_compacted_out_of_the_prompt():
     tools = Tools()
     provider = Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"search_docs","query":"specific permission"}',
-        '{"action":"read_chunks","labels":["S2"]}',
-        '{"action":"final","selected":["S2"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("search_docs", {"query": "specific permission"}),
+        ToolCall("read_chunks", {"labels": ["S2"]}),
+        ToolCall("final", {"selected": ["S2"]}),
     ])
     RetrievalAgent(tools, provider).retrieve("question")
     # The first search's excerpts survive only while that search is the latest
@@ -293,10 +289,10 @@ def test_superseded_search_results_are_compacted_out_of_the_prompt():
 def test_opened_chunk_text_is_never_compacted_away():
     tools = Tools()
     provider = Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"search_docs","query":"specific permission"}',
-        '{"action":"final","selected":["S1"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("search_docs", {"query": "specific permission"}),
+        ToolCall("final", {"selected": ["S1"]}),
     ])
     RetrievalAgent(tools, provider).retrieve("question")
     assert "generic evidence" in provider.prompts[3]
@@ -305,9 +301,9 @@ def test_opened_chunk_text_is_never_compacted_away():
 def test_agent_is_told_to_finalize_on_its_last_step():
     tools = Tools()
     provider = Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"final","selected":["S1"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("final", {"selected": ["S1"]}),
     ])
     agent = RetrievalAgent(tools, provider, max_steps=3)
     assert [item.chunk.chunk_id for item in agent.retrieve("question")] == [IDS["generic"]]
@@ -320,9 +316,9 @@ def test_agent_is_told_to_finalize_on_its_last_step():
 def test_the_finalize_notice_is_not_issued_while_steps_remain():
     tools = Tools()
     provider = Provider([
-        '{"action":"search_docs","query":"broad question"}',
-        '{"action":"read_chunks","labels":["S1"]}',
-        '{"action":"final","selected":["S1"]}',
+        ToolCall("search_docs", {"query": "broad question"}),
+        ToolCall("read_chunks", {"labels": ["S1"]}),
+        ToolCall("final", {"selected": ["S1"]}),
     ])
     RetrievalAgent(tools, provider, max_steps=8).retrieve("question")
     assert "final_step" not in provider.prompts[2]

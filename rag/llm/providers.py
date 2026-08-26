@@ -1,9 +1,26 @@
-"""Answer-provider interface for local Ollama and Databricks serving endpoints."""
+"""Answer-provider interface for local Ollama and Databricks serving endpoints.
+
+Two call shapes, deliberately separate:
+
+``complete`` asks for prose and is used for grounded answers, where free text
+is the point. ``call_tool`` asks the model to invoke one of a set of declared
+tools and is used by the retrieval agent. The tool call arrives as structured
+data from the serving runtime, so nothing downstream scavenges JSON out of
+free-form text.
+"""
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from typing import Protocol
 
 import requests
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    name: str
+    arguments: dict
 
 
 def _response_text(content) -> str:
@@ -35,10 +52,24 @@ def _client_config_kwargs(profile: str | None, timeout: float) -> dict:
     return kwargs
 
 
+def _tool_call_from_openai(tool_calls) -> ToolCall:
+    """Normalize an OpenAI-shaped tool call.
+
+    The OpenAI wire format carries ``arguments`` as a JSON string produced by a
+    constrained decoder; Ollama hands back a dict. Each provider normalizes to a
+    dict so callers never decode anything themselves.
+    """
+    if not tool_calls:
+        raise RuntimeError("the serving endpoint returned no tool call")
+    function = tool_calls[0].function
+    return ToolCall(function.name, json.loads(function.arguments))
+
+
 class AnswerProvider(Protocol):
     name: str
     model: str
     def complete(self, prompt: str) -> str: ...
+    def call_tool(self, prompt: str, tools: list[dict]) -> ToolCall: ...
 
 
 class OllamaProvider:
@@ -52,6 +83,18 @@ class OllamaProvider:
         response.raise_for_status()
         return response.json()["response"].strip()
 
+    def call_tool(self, prompt: str, tools: list[dict]) -> ToolCall:
+        response = requests.post(f"{self.base_url}/api/chat", json={
+            "model": self.model, "stream": False, "think": False, "tools": tools,
+            "messages": [{"role": "user", "content": prompt}],
+        }, timeout=self.timeout)
+        response.raise_for_status()
+        calls = response.json().get("message", {}).get("tool_calls")
+        if not calls:
+            raise RuntimeError(f"{self.model} returned prose instead of a tool call")
+        function = calls[0]["function"]
+        return ToolCall(function["name"], function.get("arguments") or {})
+
 
 class DatabricksEndpointProvider:
     name = "databricks"
@@ -59,13 +102,26 @@ class DatabricksEndpointProvider:
     def __init__(self, endpoint: str, *, profile: str | None = None, timeout: float = 90):
         self.model, self.profile, self.timeout = endpoint, profile, timeout
 
-    def complete(self, prompt: str) -> str:
+    def _workspace(self):
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.core import Config
+        return WorkspaceClient(config=Config(**_client_config_kwargs(self.profile, self.timeout)))
+
+    def complete(self, prompt: str) -> str:
         from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
-        client = WorkspaceClient(config=Config(**_client_config_kwargs(self.profile, self.timeout)))
-        response = client.serving_endpoints.query(
+        response = self._workspace().serving_endpoints.query(
             name=self.model,
             messages=[ChatMessage(role=ChatMessageRole.USER, content=prompt)],
         )
         return _response_text(response.choices[0].message.content)
+
+    def call_tool(self, prompt: str, tools: list[dict]) -> ToolCall:
+        # The typed serving_endpoints.query API exposes no tools/response_format
+        # parameter, so tool calling goes through the OpenAI-compatible client
+        # the SDK builds against the same workspace credentials.
+        client = self._workspace().serving_endpoints.get_open_ai_client(timeout=self.timeout)
+        completion = client.chat.completions.create(
+            model=self.model, tools=tools, tool_choice="required",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return _tool_call_from_openai(completion.choices[0].message.tool_calls)
