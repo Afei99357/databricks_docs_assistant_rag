@@ -86,6 +86,9 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
 Run `just index` again whenever you want to refresh the configured documentation sources and
 rebuild the local index.
 
+The local server does not use the Databricks App service principal, OBO identity, or hosted
+model endpoints.
+
 ## Measuring retrieval quality
 
 `rag/evaluation_cases.yaml` holds 25 questions, each naming the one page its answer must come
@@ -102,9 +105,6 @@ just eval-both    # both, to see what the agent's extra latency buys
 
 A question whose retrieval raises is recorded as a failure and the run continues, so one bad
 case cannot cost you the other 24 measurements.
-
-The local server uses Ollama and a local FAISS directory. It does not use the Databricks App
-service principal, OBO identity, or hosted model endpoints.
 
 ## Deploy to a new Databricks workspace
 
