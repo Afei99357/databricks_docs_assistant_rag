@@ -42,6 +42,17 @@ history, and feedback tables.
    cp .env.example .env
    ```
 
+   Install and build the Preact browser application once (and again after any
+   frontend changes). Flask serves the compiled files, so this build is also
+   required before a Databricks App Bundle deploy:
+
+   ```bash
+   cd frontend
+   npm install
+   npm run build
+   cd ..
+   ```
+
 2. Edit `.env`. At minimum, configure your Databricks profile/catalog/schema/warehouse and set:
 
    ```text

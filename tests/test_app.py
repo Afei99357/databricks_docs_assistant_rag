@@ -35,6 +35,14 @@ def test_answer_and_feedback_routes():
     assert received[0]["rating"] == "up"
 
 
+def test_home_serves_the_preact_application_shell():
+    app = create_app(retrieve=lambda _: [], provider=Provider(), threshold=.3)
+    response = app.test_client().get("/")
+    assert response.status_code == 200
+    assert b'static/ui/app.js' in response.data
+    assert b'static/ui/assets/index.css' in response.data
+
+
 def test_conversation_reuses_id_and_rewrites_follow_up():
     history = History(); queries = []
     chunk = Chunk("c", "d", "v", 0, "evidence", (), "https://docs.databricks.com/x", "Docs")
