@@ -1,5 +1,5 @@
 from rag.index.embeddings import HashEmbeddingProvider
-from rag.index.runtime import ActiveSnapshotRetriever
+from rag.index.runtime import ActiveSnapshotRetriever, app_snapshot_root
 from rag.index.service import build_and_activate
 from rag.models import Chunk
 
@@ -22,3 +22,9 @@ def test_runtime_exposes_chunk_and_document_tools(tmp_path):
     assert [item.chunk.chunk_id for item in runtime.read_chunks(["second"])] == ["second"]
     assert [item.chunk.chunk_id for item in runtime.related_chunks("first")] == ["first", "second"]
     assert {item.chunk.chunk_id for item in runtime.search_within_document("https://docs.databricks.com/x", "privilege", 3)} == {"first", "second"}
+
+
+def test_app_snapshot_root_is_always_inside_the_bound_artifact_volume():
+    assert app_snapshot_root("/Volumes/catalog/schema/rag_artifacts/") == (
+        "/Volumes/catalog/schema/rag_artifacts/app-qwen3-embedding-0-6b"
+    )

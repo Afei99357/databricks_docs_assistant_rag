@@ -9,9 +9,16 @@ from rag.index.embeddings import EmbeddingProvider
 from rag.index.faiss_store import FaissSnapshot, read_active_manifest
 from rag.models import RetrievalResult
 
+APP_SNAPSHOT_DIRECTORY = "app-qwen3-embedding-0-6b"
+
+
+def app_snapshot_root(volume_root: str) -> str:
+    """Return the fixed, embedding-compatible FAISS namespace for the App."""
+    return f"{volume_root.rstrip('/')}/{APP_SNAPSHOT_DIRECTORY}"
+
 
 class ActiveSnapshotRetriever:
-    def __init__(self, root: str | Path, embedder: EmbeddingProvider, top_k: int):
+    def __init__(self, root: str | Path, embedder: EmbeddingProvider, top_k: int = 25):
         self.root, self.embedder, self.top_k = Path(root), embedder, top_k
         self._snapshot: FaissSnapshot | None = None
 
@@ -58,7 +65,7 @@ class VolumeSnapshotRetriever:
     by the App service principal) and caches the immutable active snapshot in
     the container's ephemeral filesystem.
     """
-    def __init__(self, volume_root: str, embedder: EmbeddingProvider, top_k: int, *, workspace=None,
+    def __init__(self, volume_root: str, embedder: EmbeddingProvider, top_k: int = 25, *, workspace=None,
                  cache_root: str | Path | None = None):
         self.volume_root = volume_root.rstrip("/")
         self.embedder, self.top_k = embedder, top_k

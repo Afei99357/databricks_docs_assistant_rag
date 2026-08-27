@@ -11,8 +11,8 @@ env:
     value: genie_kb
   - name: RAG_ARTIFACT_VOLUME
     value: rag_artifacts
-  - name: RAG_RETRIEVAL_TOP_K
-    value: "25"
+  - name: RAG_AGENT_CANDIDATES_PER_SEARCH
+    value: "10"
   - name: RAG_RELEVANCE_THRESHOLD
     value: "0.35"
   - name: RAG_WAREHOUSE_ID
@@ -23,5 +23,5 @@ env:
   # this Volume; it never reads the local/Ollama active snapshot.
   - name: RAG_DATABRICKS_EMBEDDING_ENDPOINT
     valueFrom: qwen_embedding
-  - name: DATABRICKS_CHAT_ENDPOINT
+  - name: RAG_CHAT_MODEL
     valueFrom: gpt_oss_reasoning

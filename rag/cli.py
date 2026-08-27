@@ -13,14 +13,14 @@ from rag.evaluate import format_header, format_row, format_summary, load_cases
 from rag.history import ConversationRepository
 from rag.identity import LocalTestIdentityProvider
 from rag.index.embeddings import OllamaEmbeddingProvider
-from rag.index.runtime import ActiveSnapshotRetriever
+from rag.index.runtime import ActiveSnapshotRetriever, app_snapshot_root
 from rag.ingest.fetch import fetch_page
 from rag.ingest.sources import (
     GENIE_LANDING_URL,
     discover_genie_core,
     load_curated_docs,
 )
-from rag.llm.providers import DatabricksEndpointProvider, OllamaProvider, OpenAICompatibleProvider
+from rag.llm.providers import OpenAICompatibleProvider
 from rag.store import DatabricksFeedbackSink, DatabricksRequestTraceSink, DatabricksStore
 from rag.workflow import (
     build_snapshot,
@@ -58,22 +58,19 @@ def _local_stack(settings: Settings):
     root = os.getenv("RAG_LOCAL_INDEX_DIR")
     if not root:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to downloaded local snapshot artifacts")
-    embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.ollama_base_url)
-    if settings.answer_provider == "ollama":
-        provider = OllamaProvider(settings.ollama_base_url, settings.ollama_model)
-    elif settings.answer_provider == "openai-compatible":
-        if not settings.openai_base_url or not settings.openai_model:
-            raise ValueError("openai-compatible ANSWER_PROVIDER requires OPENAI_BASE_URL and OPENAI_MODEL")
-        provider = OpenAICompatibleProvider(settings.openai_base_url, settings.openai_model,
-                                            api_key=settings.openai_api_key or "local")
-    else:
-        provider = DatabricksEndpointProvider(settings.databricks_chat_endpoint, profile=settings.databricks_profile)
+    embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.embedding_base_url)
+    if not settings.chat_model:
+        raise ValueError("RAG_CHAT_MODEL must name the chat model or Databricks serving endpoint")
+    if not settings.chat_base_url:
+        raise ValueError("RAG_CHAT_BASE_URL must name the local OpenAI-compatible chat endpoint")
+    provider = OpenAICompatibleProvider(settings.chat_base_url, settings.chat_model,
+                                        api_key=settings.chat_api_key or "local")
     if bool(settings.agent_base_url) != bool(settings.agent_model):
         raise ValueError("set both RAG_AGENT_BASE_URL and RAG_AGENT_MODEL, or neither")
     agent_provider = (OpenAICompatibleProvider(settings.agent_base_url, settings.agent_model,
                                                 api_key=settings.agent_api_key or "local")
                       if settings.agent_base_url else provider)
-    return ActiveSnapshotRetriever(root, embedder, settings.top_k), provider, agent_provider
+    return ActiveSnapshotRetriever(root, embedder), provider, agent_provider
 
 
 def evaluate(mode: str) -> None:
@@ -102,7 +99,7 @@ def serve() -> None:
     feedback = DatabricksFeedbackSink(
         store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model
     )
-    agent = RetrievalAgent(retriever, agent_provider)
+    agent = RetrievalAgent(retriever, agent_provider, candidates_per_search=settings.agent_candidates_per_search)
     history = ConversationRepository(store, settings.namespace)
     identity = LocalTestIdentityProvider()
     create_app(
@@ -132,9 +129,7 @@ def build_app_snapshot() -> None:
         profile=settings.databricks_profile,
     )
     chunks = load_current_chunks(store, f"{settings.namespace}.rag_chunks")
-    app_index_root = (
-        os.getenv("RAG_APP_INDEX_ROOT") or f"{settings.volume_path}/app-qwen3-embedding-0-6b"
-    )
+    app_index_root = app_snapshot_root(settings.volume_path)
     published = publish_volume_snapshot(
         store,
         namespace=settings.namespace,
@@ -163,7 +158,7 @@ def build_local_snapshot() -> None:
     if not chunks:
         raise RuntimeError("source refresh produced no chunks")
     print(f"building local FAISS snapshot from {len(chunks)} chunks...", flush=True)
-    embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.ollama_base_url)
+    embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.embedding_base_url)
     published = build_snapshot(chunks, embedder, root)
     print(
         f"published local snapshot {published.metadata.snapshot_id} "

@@ -1,4 +1,4 @@
-"""Answer-provider interface for local Ollama and Databricks serving endpoints.
+"""Answer-provider interface for OpenAI-compatible and Databricks endpoints.
 
 Both providers speak the OpenAI chat-completions protocol, so the request and
 response handling lives in one place and only the client construction differs:
@@ -164,26 +164,6 @@ class _OpenAIChatProvider:
 
     def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall:
         return self.call_tools(messages, tools)[0]
-
-
-class OllamaProvider(_OpenAIChatProvider):
-    name = "ollama"
-
-    def __init__(self, base_url: str, model: str, timeout: float = 90):
-        self.model, self.timeout = model, timeout
-        self.base_url = base_url.rstrip("/") + "/v1"
-        # Ollama exposes its reasoning toggle as a vendor extension rather than
-        # an OpenAI parameter. Leaving it on roughly doubles per-turn latency
-        # without measurably improving tool selection.
-        self.extra_body = {"think": False}
-        self._cached = None
-
-    def _client(self):
-        if self._cached is None:
-            from openai import OpenAI
-            # Ollama ignores the key but the client insists on one.
-            self._cached = OpenAI(base_url=self.base_url, api_key="ollama", timeout=self.timeout)
-        return self._cached
 
 
 class OpenAICompatibleProvider(_OpenAIChatProvider):

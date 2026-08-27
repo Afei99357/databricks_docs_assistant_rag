@@ -12,16 +12,13 @@ class Settings:
     warehouse_id: str
     artifact_volume: str
     embedding_model: str
-    top_k: int
+    agent_candidates_per_search: int
     relevance_threshold: float
-    answer_provider: str
-    ollama_base_url: str
-    ollama_model: str
-    databricks_chat_endpoint: str
+    chat_base_url: str | None
+    chat_model: str | None
+    chat_api_key: str | None
+    embedding_base_url: str
     databricks_profile: str | None
-    openai_base_url: str | None
-    openai_model: str | None
-    openai_api_key: str | None
     agent_base_url: str | None
     agent_model: str | None
     agent_api_key: str | None
@@ -40,14 +37,18 @@ class Settings:
         missing = [name for name in required if not os.getenv(name)]
         if missing:
             raise ValueError("missing required configuration: " + ", ".join(missing))
+        # Local chat servers all use the OpenAI-compatible /v1 API. The old
+        # names remain fallbacks so existing private .env files still start.
+        legacy_base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_BASE_URL")
+        legacy_model = os.getenv("OPENAI_MODEL") or os.getenv("OLLAMA_MODEL")
         return cls(os.environ["RAG_CATALOG"], os.environ["RAG_SCHEMA"], os.environ["RAG_WAREHOUSE_ID"],
                    os.getenv("RAG_ARTIFACT_VOLUME", "rag_artifacts"),
                    os.getenv("RAG_EMBEDDING_MODEL", "qwen3-embedding:4b"),
-                   int(os.getenv("RAG_RETRIEVAL_TOP_K", "25")), float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.35")),
-                   os.getenv("ANSWER_PROVIDER", "ollama"), os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-                   os.getenv("OLLAMA_MODEL", "qwen3.5"), os.getenv("DATABRICKS_CHAT_ENDPOINT", "databricks-gpt-oss-20b"),
+                   int(os.getenv("RAG_AGENT_CANDIDATES_PER_SEARCH", "10")), float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.35")),
+                   os.getenv("RAG_CHAT_BASE_URL") or legacy_base_url or None,
+                   os.getenv("RAG_CHAT_MODEL") or legacy_model or None,
+                   os.getenv("RAG_CHAT_API_KEY") or os.getenv("OPENAI_API_KEY") or None,
+                   os.getenv("RAG_EMBEDDING_BASE_URL") or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
                    os.getenv("RAG_DATABRICKS_PROFILE") or None,
-                   os.getenv("OPENAI_BASE_URL") or None, os.getenv("OPENAI_MODEL") or None,
-                   os.getenv("OPENAI_API_KEY") or None,
                    os.getenv("RAG_AGENT_BASE_URL") or None, os.getenv("RAG_AGENT_MODEL") or None,
                    os.getenv("RAG_AGENT_API_KEY") or None)

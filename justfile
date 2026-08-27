@@ -24,7 +24,6 @@ frontend:
 # Pull the local Ollama models.
 models:
     ollama pull "$RAG_EMBEDDING_MODEL"
-    ollama pull "$OLLAMA_MODEL"
 
 # --- development -------------------------------------------------------
 
@@ -79,7 +78,7 @@ _bundle_vars := '--var "catalog=$RAG_CATALOG" --var "schema=$RAG_SCHEMA" ' + \
 # Confirm both serving endpoints exist in the target workspace.
 endpoints:
     databricks serving-endpoints get "$RAG_DATABRICKS_EMBEDDING_ENDPOINT" --profile "$RAG_DATABRICKS_PROFILE"
-    databricks serving-endpoints get "$DATABRICKS_CHAT_ENDPOINT" --profile "$RAG_DATABRICKS_PROFILE"
+    databricks serving-endpoints get "$RAG_DATABRICKS_CHAT_ENDPOINT" --profile "$RAG_DATABRICKS_PROFILE"
 
 # Upload the project source as the Job-only bootstrap Bundle.
 bootstrap-deploy:
@@ -94,7 +93,7 @@ bootstrap-run:
 # Deploy the App Bundle's resource configuration. Run `just frontend` first.
 app-deploy:
     databricks bundle deploy --target dev --profile "$RAG_DATABRICKS_PROFILE" {{_bundle_vars}} \
-        --var "reasoning_endpoint=$DATABRICKS_CHAT_ENDPOINT"
+        --var "reasoning_endpoint=$RAG_DATABRICKS_CHAT_ENDPOINT"
 
 # Publish the uploaded source to the App. RAG_APP_SOURCE_PATH is the Bundle deployer's workspace path.
 app-publish:

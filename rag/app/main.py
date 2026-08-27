@@ -14,7 +14,7 @@ from rag.config import Settings
 from rag.history import ConversationRepository
 from rag.identity import DatabricksAppIdentityProvider
 from rag.index.embeddings import DatabricksEmbeddingProvider
-from rag.index.runtime import VolumeSnapshotRetriever
+from rag.index.runtime import VolumeSnapshotRetriever, app_snapshot_root
 from rag.llm.providers import DatabricksEndpointProvider
 from rag.store import DatabricksFeedbackSink, DatabricksRequestTraceSink, DatabricksStore
 
@@ -28,15 +28,17 @@ def create_databricks_app():
     # Never share an active manifest across embedding spaces. Local Ollama
     # snapshots can remain in the Volume root while this App reads only its
     # Databricks-Qwen namespace.
-    artifact_root = os.getenv("RAG_APP_INDEX_ROOT") or f"{artifact_volume.rstrip('/')}/app-qwen3-embedding-0-6b"
+    artifact_root = app_snapshot_root(artifact_volume)
     embedder = DatabricksEmbeddingProvider(embedding_endpoint)
-    retriever = VolumeSnapshotRetriever(artifact_root, embedder, settings.top_k)
-    provider = DatabricksEndpointProvider(settings.databricks_chat_endpoint)
+    retriever = VolumeSnapshotRetriever(artifact_root, embedder)
+    if not settings.chat_model:
+        raise RuntimeError("the Databricks App requires RAG_CHAT_MODEL from its serving-endpoint resource")
+    provider = DatabricksEndpointProvider(settings.chat_model)
     store = DatabricksStore(settings.warehouse_id)
     feedback = DatabricksFeedbackSink(
         store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model,
     )
-    agent = RetrievalAgent(retriever, provider)
+    agent = RetrievalAgent(retriever, provider, candidates_per_search=settings.agent_candidates_per_search)
     return create_app(
         retrieve=agent.retrieve,
         provider=provider,

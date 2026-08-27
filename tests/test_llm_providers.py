@@ -2,7 +2,6 @@ import pytest
 
 from rag.llm.providers import (
     DatabricksEndpointProvider,
-    OllamaProvider,
     OpenAICompatibleProvider,
     _client_config_kwargs,
     _tool_call_from_openai,
@@ -60,16 +59,6 @@ def _provider(cls, message, *args, usage=None, **kwargs):
     return provider, completions
 
 
-def test_ollama_talks_to_the_openai_compatible_endpoint():
-    # Ollama's own /api/chat and /api/generate routes work, but speaking the
-    # same protocol as Databricks is what keeps the two runtimes at parity.
-    assert OllamaProvider("http://localhost:11434/", "qwen").base_url == "http://localhost:11434/v1"
-
-
-def test_ollama_disables_reasoning_through_the_vendor_extension():
-    assert OllamaProvider("http://localhost:11434", "qwen").extra_body == {"think": False}
-
-
 def test_openai_compatible_provider_keeps_or_adds_the_v1_path():
     assert OpenAICompatibleProvider("http://intuition.local:1234", "muse").base_url == "http://intuition.local:1234/v1"
     assert OpenAICompatibleProvider("http://intuition.local:1234/v1", "muse").base_url == "http://intuition.local:1234/v1"
@@ -77,7 +66,7 @@ def test_openai_compatible_provider_keeps_or_adds_the_v1_path():
 
 def test_the_provider_returns_a_native_tool_call():
     assistant = _Message([_Call("final", '{"selected": ["S1", "S4"]}', "call_abc")])
-    provider, completions = _provider(OllamaProvider, assistant, "http://localhost:11434", "qwen")
+    provider, completions = _provider(OpenAICompatibleProvider, assistant, "http://localhost:11434", "qwen")
     tools = [{"type": "function", "function": {"name": "final", "parameters": {}}}]
     messages = [{"role": "system", "content": "investigate"}, {"role": "user", "content": "Question: x"}]
 
@@ -110,13 +99,13 @@ def test_the_provider_preserves_every_native_tool_call_in_one_assistant_turn():
 
 
 def test_the_provider_raises_when_the_model_answers_without_calling_a_tool():
-    provider, _ = _provider(OllamaProvider, _Message(content="I think S1."), "http://localhost:11434", "qwen")
+    provider, _ = _provider(OpenAICompatibleProvider, _Message(content="I think S1."), "http://localhost:11434", "qwen")
     with pytest.raises(RuntimeError, match="prose instead of a tool call"):
         provider.call_tool([], [])
 
 
 def test_complete_sends_the_prompt_as_a_single_user_turn():
-    provider, completions = _provider(OllamaProvider, _Message(content=" grounded answer "),
+    provider, completions = _provider(OpenAICompatibleProvider, _Message(content=" grounded answer "),
                                       "http://localhost:11434", "qwen")
 
     assert provider.complete("Answer from the sources.") == "grounded answer"
@@ -126,7 +115,7 @@ def test_complete_sends_the_prompt_as_a_single_user_turn():
 
 def test_provider_captures_reported_usage_per_call():
     usage = type("Usage", (), {"prompt_tokens": 21, "completion_tokens": 8, "total_tokens": 29})()
-    provider, _ = _provider(OllamaProvider, _Message(content="answer"), "http://localhost:11434", "qwen", usage=usage)
+    provider, _ = _provider(OpenAICompatibleProvider, _Message(content="answer"), "http://localhost:11434", "qwen", usage=usage)
 
     with capture_llm_usage() as calls:
         provider.complete("Answer from sources.")
@@ -137,7 +126,7 @@ def test_provider_captures_reported_usage_per_call():
 
 
 def test_provider_records_unknown_usage_without_estimating_tokens():
-    provider, _ = _provider(OllamaProvider, _Message(content="answer"), "http://localhost:11434", "qwen")
+    provider, _ = _provider(OpenAICompatibleProvider, _Message(content="answer"), "http://localhost:11434", "qwen")
 
     with capture_llm_usage() as calls:
         provider.complete("Answer from sources.")

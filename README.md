@@ -20,8 +20,10 @@ and model inference. It uses the forwarded user token only to derive a trusted h
 no browser-supplied user ID is accepted.
 
 - embeddings: `databricks-qwen3-embedding-0-6b`
-- retrieval reasoning and answer generation: `databricks-gpt-oss-20b`
-- local `rag serve` remains Ollama-based and is unaffected.
+- retrieval reasoning and answer generation: the configured `RAG_CHAT_MODEL`
+  (tested with `databricks-claude-sonnet-4-5`)
+- local `rag serve` can use Ollama or any OpenAI-compatible server such as
+  llama.cpp hosting Muse.
 
 Before deploying, build and publish a separate snapshot with the Databricks Qwen embedding
 endpoint. It is stored under `rag_artifacts/app-qwen3-embedding-0-6b/`, separately from any
@@ -31,9 +33,10 @@ history/feedback tables, SQL warehouse, and the two model endpoints.
 
 ## Local setup
 
-The local server uses Ollama for answer generation and embeddings, and a local FAISS directory
-for retrieval. It still uses the configured Databricks SQL warehouse for the governed document,
-history, and feedback tables.
+The local server uses Ollama for embeddings and a local FAISS directory for retrieval. Its chat
+model is independently configurable: use Muse through llama.cpp's OpenAI-compatible API, native
+Ollama, or a Databricks serving endpoint. It still uses the configured Databricks SQL warehouse
+for the governed document, history, and feedback tables.
 
 Every command below is a [`just`](https://github.com/casey/just) recipe. Run `just` on its own
 to list them. The recipes load `.env` themselves, so no `set -a` / `source` step is needed.
@@ -58,12 +61,25 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
    ```text
    RAG_LOCAL_INDEX_DIR=/absolute/path/to/local-faiss-index
    RAG_LOCAL_TEST_USER_ID=your-email@example.com
-   ANSWER_PROVIDER=ollama
+   RAG_EMBEDDING_BASE_URL=http://localhost:11434
    RAG_EMBEDDING_MODEL=qwen3-embedding:4b
-   OLLAMA_MODEL=qwen3.5:latest
+   RAG_AGENT_CANDIDATES_PER_SEARCH=10
+   RAG_CHAT_BASE_URL=http://your-chat-host:1234/v1
+   RAG_CHAT_MODEL=your-chat-model
+   RAG_CHAT_API_KEY=local
    ```
 
-3. Start Ollama and make sure both local models are available:
+   `RAG_CHAT_*` controls both retrieval-agent reasoning and final-answer
+   generation. A model such as Muse running through llama.cpp belongs to
+   the OpenAI-compatible API; the API protocol, not the model, is what the
+   app requires. An Ollama chat model can use the same configuration with
+   `RAG_CHAT_BASE_URL=http://localhost:11434/v1`, but should be evaluated for
+   tool-call reliability before using agent mode.
+
+   `RAG_AGENT_CANDIDATES_PER_SEARCH` is the maximum number of ranked chunks
+   exposed to the agent for each search tool call. The default is 10.
+
+3. Start Ollama and make sure the embedding model is available:
 
    ```bash
    just models
@@ -88,6 +104,34 @@ rebuild the local index.
 
 The local server does not use the Databricks App service principal, OBO identity, or hosted
 model endpoints.
+
+### Switch the chat model
+
+Changing models is an `.env` change followed by restarting `just serve`; the
+retrieval agent and final answer use the same `RAG_CHAT_*` settings by default.
+
+For Muse through llama.cpp:
+
+```text
+RAG_CHAT_BASE_URL=http://your-muse-host:1234/v1
+RAG_CHAT_MODEL=unsloth/Muse-Glimmer-30B-GGUF:UD-Q4_K_XL
+RAG_CHAT_API_KEY=local
+```
+
+For a chat model served by Ollama:
+
+```text
+RAG_CHAT_BASE_URL=http://localhost:11434/v1
+RAG_CHAT_MODEL=your-ollama-chat-model
+```
+
+For Databricks deployment, set `RAG_DATABRICKS_CHAT_ENDPOINT` to the serving
+endpoint name. The App receives that endpoint as `RAG_CHAT_MODEL` through its
+resource binding; it does not read the local `.env` at runtime.
+
+`OPENAI_*` and `OLLAMA_MODEL` remain accepted as compatibility aliases, but
+new configurations should use `RAG_CHAT_*`. `RAG_AGENT_*` is an advanced override only—leave it unset to
+keep one model responsible for both reasoning and final answers.
 
 ## Measuring retrieval quality
 
@@ -127,7 +171,8 @@ databricks auth login --host https://<workspace-host> --profile <profile>
 
 Set the workspace values once, in `.env`: `RAG_DATABRICKS_PROFILE`, `RAG_CATALOG`, `RAG_SCHEMA`,
 `RAG_WAREHOUSE_ID`, `RAG_ARTIFACT_VOLUME`, `RAG_DATABRICKS_EMBEDDING_ENDPOINT`,
-`DATABRICKS_CHAT_ENDPOINT`, `RAG_APP_NAME`, and `RAG_APP_SOURCE_PATH`. Every deployment recipe
+`RAG_DATABRICKS_CHAT_ENDPOINT` (the serving endpoint), `RAG_APP_NAME`, and
+`RAG_APP_SOURCE_PATH`. Every deployment recipe
 reads them from there, so no workspace value is repeated in a command.
 
 Confirm both endpoints exist before continuing:
@@ -197,9 +242,9 @@ The Bundle creates the App and configures these service-principal resources:
 | --- | --- |
 | SQL warehouse | `CAN_USE` |
 | `rag_artifacts` Volume | `READ_VOLUME` |
-| `rag_feedback`, `rag_conversations`, `rag_conversation_turns` | `SELECT` and `MODIFY` |
+| `rag_feedback`, `rag_conversations`, `rag_conversation_turns`, `rag_request_traces`, `rag_retrieval_traces` | `SELECT` and `MODIFY` as required |
 | `databricks-qwen3-embedding-0-6b` | `CAN_QUERY` |
-| `databricks-gpt-oss-20b` | `CAN_QUERY` |
+| configured `RAG_DATABRICKS_CHAT_ENDPOINT` | `CAN_QUERY` |
 
 Each answer also writes a request diagnostic record to `rag_request_traces`:
 the resolved query, retrieval searches and selected evidence, raw final model
