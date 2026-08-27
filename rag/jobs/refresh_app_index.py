@@ -7,6 +7,7 @@ import os
 
 from rag.config import Settings
 from rag.index.embeddings import DatabricksEmbeddingProvider
+from rag.index.runtime import app_snapshot_root
 from rag.store import DatabricksStore
 from rag.workflow import publish_volume_snapshot, refresh_sources
 
@@ -58,7 +59,7 @@ def main() -> None:
     published = publish_volume_snapshot(
         store,
         namespace=settings.namespace,
-        volume_path=f"{settings.volume_path}/app-qwen3-embedding-0-6b",
+        volume_path=app_snapshot_root(settings.volume_path),
         chunks=chunks,
         embedder=embedder,
     )
