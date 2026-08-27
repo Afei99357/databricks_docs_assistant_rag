@@ -62,20 +62,17 @@ def _local_stack(settings: Settings):
     if settings.answer_provider == "ollama":
         provider = OllamaProvider(settings.ollama_base_url, settings.ollama_model)
     elif settings.answer_provider == "openai-compatible":
-        answer_base_url = settings.answer_base_url or settings.agent_base_url
-        answer_model = settings.answer_model or settings.agent_model
-        if not answer_base_url or not answer_model:
-            raise ValueError("openai-compatible ANSWER_PROVIDER requires RAG_ANSWER_BASE_URL/RAG_ANSWER_MODEL or RAG_AGENT_BASE_URL/RAG_AGENT_MODEL")
-        provider = OpenAICompatibleProvider(answer_base_url, answer_model,
-                                            api_key=settings.answer_api_key or settings.agent_api_key or "local")
+        if not settings.openai_base_url or not settings.openai_model:
+            raise ValueError("openai-compatible ANSWER_PROVIDER requires OPENAI_BASE_URL and OPENAI_MODEL")
+        provider = OpenAICompatibleProvider(settings.openai_base_url, settings.openai_model,
+                                            api_key=settings.openai_api_key or "local")
     else:
         provider = DatabricksEndpointProvider(settings.databricks_chat_endpoint, profile=settings.databricks_profile)
-    agent_provider = (
-        OpenAICompatibleProvider(settings.agent_base_url, settings.agent_model,
-                                 api_key=settings.agent_api_key or "local")
-        if settings.agent_base_url and settings.agent_model
-        else provider
-    )
+    if bool(settings.agent_base_url) != bool(settings.agent_model):
+        raise ValueError("set both RAG_AGENT_BASE_URL and RAG_AGENT_MODEL, or neither")
+    agent_provider = (OpenAICompatibleProvider(settings.agent_base_url, settings.agent_model,
+                                                api_key=settings.agent_api_key or "local")
+                      if settings.agent_base_url else provider)
     return ActiveSnapshotRetriever(root, embedder, settings.top_k), provider, agent_provider
 
 
