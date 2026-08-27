@@ -1,4 +1,5 @@
 """Snapshot publication workflow with validation before activation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -17,7 +18,13 @@ class PublishedSnapshot:
     local_directory: Path
 
 
-def build_and_activate(chunks: list[Chunk], embedder: EmbeddingProvider, root: str | Path) -> PublishedSnapshot:
+def build_and_activate(
+    chunks: list[Chunk],
+    embedder: EmbeddingProvider,
+    root: str | Path,
+    *,
+    corpus_fingerprint: str | None = None,
+) -> PublishedSnapshot:
     root, snapshot_id = Path(root), uuid4().hex
     staging = root / "staging" / snapshot_id
     final = root / "snapshots" / snapshot_id
@@ -26,6 +33,15 @@ def build_and_activate(chunks: list[Chunk], embedder: EmbeddingProvider, root: s
     snapshot.save(staging)
     final.parent.mkdir(parents=True, exist_ok=True)
     staging.replace(final)
-    write_active_manifest(root, snapshot_id)
-    metadata = IndexSnapshot(snapshot_id, embedder.model_name, snapshot.index.d, len(chunks), str(final), "active", datetime.now(timezone.utc))
+    write_active_manifest(root, snapshot_id, corpus_fingerprint=corpus_fingerprint)
+    metadata = IndexSnapshot(
+        snapshot_id,
+        embedder.model_name,
+        snapshot.index.d,
+        len(chunks),
+        str(final),
+        "active",
+        datetime.now(timezone.utc),
+        corpus_fingerprint,
+    )
     return PublishedSnapshot(metadata, final)

@@ -6,8 +6,9 @@ resources:
       max_concurrent_runs: 1
       tasks:
         - task_key: refresh_and_publish
-          spark_python_task:
-            python_file: ../rag/jobs/refresh_app_index.py
+          python_wheel_task:
+            package_name: databricks_docs_rag
+            entry_point: refresh_app_index
             parameters:
               - --catalog
               - ${var.catalog}
@@ -21,11 +22,17 @@ resources:
               - ${var.embedding_endpoint}
               - --schema-sql-path
               - ${workspace.file_path}/sql/001_rag_schema.sql
-          environment_key: default
+          libraries:
+            - whl: ../dist/*.whl
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: ${var.node_type_id}
+            num_workers: 0
+            spark_conf:
+              spark.master: local[*]
+              spark.databricks.cluster.profile: singleNode
+            custom_tags:
+              ResourceClass: SingleNode
+              dev: ${workspace.current_user.short_name}
+            data_security_mode: SINGLE_USER
           timeout_seconds: 3600
-      environments:
-        - environment_key: default
-          spec:
-            environment_version: "2"
-            dependencies:
-              - ${workspace.file_path}

@@ -32,6 +32,7 @@ rag = ["ingest/config/*.yaml", "app/templates/*.html", "app/static/*.js", "app/s
 
 [project.scripts]
 rag = "rag.cli:main"
+refresh_app_index = "rag.jobs.refresh_app_index:main"
 
 [tool.pytest.ini_options]
 markers = ["integration: requires live external services"]

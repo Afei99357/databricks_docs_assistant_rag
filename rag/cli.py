@@ -13,32 +13,23 @@ from rag.evaluate import format_header, format_row, format_summary, load_cases
 from rag.history import ConversationRepository
 from rag.identity import LocalTestIdentityProvider
 from rag.index.embeddings import OllamaEmbeddingProvider
+from rag.index.faiss_store import read_active_fingerprint
 from rag.index.runtime import ActiveSnapshotRetriever, app_snapshot_root
-from rag.ingest.fetch import fetch_page
-from rag.ingest.sources import (
-    GENIE_LANDING_URL,
-    discover_genie_core,
-    load_curated_docs,
-)
 from rag.llm.providers import OpenAICompatibleProvider
 from rag.store import DatabricksFeedbackSink, DatabricksRequestTraceSink, DatabricksStore
 from rag.workflow import (
     build_snapshot,
     load_current_chunks,
+    official_sources,
     publish_volume_snapshot,
     refresh_sources,
 )
 
 
 def discover() -> None:
-    landing = fetch_page("genie-landing", GENIE_LANDING_URL)
-    if landing.outcome != "ok" or not landing.html:
-        raise RuntimeError(f"landing-page discovery failed: {landing.error_message}")
-    docs = discover_genie_core(landing.html)
-    config_dir = Path(__file__).parent / "ingest/config"
-    supplemental = load_curated_docs(config_dir / "curated_urls.yaml")
-    print(f"discovered {len(docs)} Genie-core pages and loaded {len(supplemental)} curated pages")
-    for document in [*docs, *supplemental]:
+    docs = official_sources()
+    print(f"discovered {len(docs)} configured documentation pages")
+    for document in docs:
         print(f"{document.doc_id}\t{document.canonical_requested_url}")
 
 
@@ -58,18 +49,25 @@ def _local_stack(settings: Settings):
     root = os.getenv("RAG_LOCAL_INDEX_DIR")
     if not root:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to downloaded local snapshot artifacts")
-    embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.embedding_base_url)
+    embedder = OllamaEmbeddingProvider(
+        settings.embedding_model, base_url=settings.embedding_base_url
+    )
     if not settings.chat_model:
         raise ValueError("RAG_CHAT_MODEL must name the chat model or Databricks serving endpoint")
     if not settings.chat_base_url:
         raise ValueError("RAG_CHAT_BASE_URL must name the local OpenAI-compatible chat endpoint")
-    provider = OpenAICompatibleProvider(settings.chat_base_url, settings.chat_model,
-                                        api_key=settings.chat_api_key or "local")
+    provider = OpenAICompatibleProvider(
+        settings.chat_base_url, settings.chat_model, api_key=settings.chat_api_key or "local"
+    )
     if bool(settings.agent_base_url) != bool(settings.agent_model):
         raise ValueError("set both RAG_AGENT_BASE_URL and RAG_AGENT_MODEL, or neither")
-    agent_provider = (OpenAICompatibleProvider(settings.agent_base_url, settings.agent_model,
-                                                api_key=settings.agent_api_key or "local")
-                      if settings.agent_base_url else provider)
+    agent_provider = (
+        OpenAICompatibleProvider(
+            settings.agent_base_url, settings.agent_model, api_key=settings.agent_api_key or "local"
+        )
+        if settings.agent_base_url
+        else provider
+    )
     return ActiveSnapshotRetriever(root, embedder), provider, agent_provider
 
 
@@ -77,16 +75,22 @@ def evaluate(mode: str) -> None:
     """Run the question battery and print the per-case table."""
     settings = Settings.from_env()
     retriever, _provider, agent_provider = _local_stack(settings)
-    retrieve = (retriever.retrieve if mode == "plain"
-                else RetrievalAgent(retriever, agent_provider).retrieve)
+    retrieve = (
+        retriever.retrieve
+        if mode == "plain"
+        else RetrievalAgent(retriever, agent_provider).retrieve
+    )
     cases = load_cases()
     print(f"evaluating {len(cases)} questions against {mode} retrieval", flush=True)
     print(format_header(), flush=True)
     # Cases are printed as they finish: an agent run takes minutes, and a table
     # that only appears at the end is a table nobody watches.
     counter = iter(range(1, len(cases) + 1))
-    report = run_evaluation(cases, retrieve,
-                            on_case=lambda outcome: print(format_row(next(counter), outcome), flush=True))
+    report = run_evaluation(
+        cases,
+        retrieve,
+        on_case=lambda outcome: print(format_row(next(counter), outcome), flush=True),
+    )
     print(format_summary(report))
 
 
@@ -99,7 +103,9 @@ def serve() -> None:
     feedback = DatabricksFeedbackSink(
         store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model
     )
-    agent = RetrievalAgent(retriever, agent_provider, candidates_per_search=settings.agent_candidates_per_search)
+    agent = RetrievalAgent(
+        retriever, agent_provider, candidates_per_search=settings.agent_candidates_per_search
+    )
     history = ConversationRepository(store, settings.namespace)
     identity = LocalTestIdentityProvider()
     create_app(
@@ -112,9 +118,13 @@ def serve() -> None:
         trace_getter=lambda: agent.last_trace,
         progress_retrieve=agent.retrieve,
         trace_sink=DatabricksRequestTraceSink(
-            store, f"{settings.namespace}.rag_request_traces", provider=provider.name, model=provider.model,
+            store,
+            f"{settings.namespace}.rag_request_traces",
+            provider=provider.name,
+            model=provider.model,
             retrieval_table=f"{settings.namespace}.rag_retrieval_traces",
-            agent_provider=agent_provider.name, agent_model=agent_provider.model,
+            agent_provider=agent_provider.name,
+            agent_model=agent_provider.model,
         ),
     ).run(host="127.0.0.1", port=int(os.getenv("PORT", "8000")), debug=False)
 
@@ -129,7 +139,18 @@ def build_app_snapshot() -> None:
         os.getenv("RAG_DATABRICKS_EMBEDDING_ENDPOINT", "databricks-qwen3-embedding-0-6b"),
         profile=settings.databricks_profile,
     )
-    chunks = load_current_chunks(store, f"{settings.namespace}.rag_chunks")
+    refreshed = refresh_sources(
+        store,
+        document_table=f"{settings.namespace}.rag_documents",
+        chunk_table=f"{settings.namespace}.rag_chunks",
+    )
+    snapshot_table = f"{settings.namespace}.rag_index_snapshots"
+    if store.active_snapshot_fingerprint(snapshot_table) == refreshed.corpus_fingerprint:
+        print("App snapshot already matches the refreshed corpus; skipping embedding build.")
+        return
+    chunks = load_current_chunks(
+        store, f"{settings.namespace}.rag_chunks", f"{settings.namespace}.rag_documents"
+    )
     app_index_root = app_snapshot_root(settings.volume_path)
     published = publish_volume_snapshot(
         store,
@@ -137,6 +158,8 @@ def build_app_snapshot() -> None:
         volume_path=app_index_root,
         chunks=chunks,
         embedder=embedder,
+        corpus_fingerprint=refreshed.corpus_fingerprint,
+        document_table=f"{settings.namespace}.rag_documents",
     )
     print(
         f"published App snapshot {published.metadata.snapshot_id} ({published.metadata.chunk_count} chunks)"
@@ -151,16 +174,27 @@ def build_local_snapshot() -> None:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to the local snapshot directory")
     store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
     print("refreshing configured sources and chunks...", flush=True)
-    chunks = refresh_sources(
+    refreshed = refresh_sources(
         store,
         document_table=f"{settings.namespace}.rag_documents",
         chunk_table=f"{settings.namespace}.rag_chunks",
     )
-    if not chunks:
-        raise RuntimeError("source refresh produced no chunks")
+    chunks = load_current_chunks(
+        store, f"{settings.namespace}.rag_chunks", f"{settings.namespace}.rag_documents"
+    )
+    if read_active_fingerprint(root) == refreshed.corpus_fingerprint:
+        print("local snapshot already matches the refreshed corpus; skipping embedding build.")
+        return
     print(f"building local FAISS snapshot from {len(chunks)} chunks...", flush=True)
-    embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.embedding_base_url)
-    published = build_snapshot(chunks, embedder, root)
+    embedder = OllamaEmbeddingProvider(
+        settings.embedding_model, base_url=settings.embedding_base_url
+    )
+    published = build_snapshot(
+        chunks, embedder, root, corpus_fingerprint=refreshed.corpus_fingerprint
+    )
+    store.mark_documents_materialized(
+        f"{settings.namespace}.rag_documents", chunk_table=f"{settings.namespace}.rag_chunks"
+    )
     print(
         f"published local snapshot {published.metadata.snapshot_id} "
         f"({published.metadata.chunk_count} chunks)"
@@ -173,9 +207,15 @@ def main() -> None:
     commands.add_parser("discover", help="fetch and list official source URLs")
     commands.add_parser("setup-db", help="create configured Delta tables and artifact Volume")
     commands.add_parser("serve", help="serve the active local snapshot through Flask")
-    evaluation = commands.add_parser("evaluate", help="run the question battery and report retrieval quality")
-    evaluation.add_argument("--mode", choices=("agent", "plain"), default="agent",
-                            help="investigate with the retrieval agent, or run one plain search per question")
+    evaluation = commands.add_parser(
+        "evaluate", help="run the question battery and report retrieval quality"
+    )
+    evaluation.add_argument(
+        "--mode",
+        choices=("agent", "plain"),
+        default="agent",
+        help="investigate with the retrieval agent, or run one plain search per question",
+    )
     commands.add_parser(
         "build-app-snapshot",
         help="build and activate a Databricks-embedding snapshot in the artifact Volume",

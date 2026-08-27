@@ -1,0 +1,41 @@
+# Automatic, bounded discovery roots. Each root stays on docs.databricks.com
+# and only follows URLs within its explicit path family.
+- id: genie
+  url: https://docs.databricks.com/aws/en/genie/
+  allowed_path_prefixes:
+    - /aws/en/genie/
+    - /aws/en/genie-agents
+    - /aws/en/genie-one
+    - /aws/en/genie-code
+  category: genie-concepts
+  max_pages: 250
+- id: databricks-apps
+  url: https://docs.databricks.com/aws/en/dev-tools/databricks-apps
+  allowed_path_prefixes:
+    - /aws/en/dev-tools/databricks-apps
+  category: databricks-apps
+  max_pages: 250
+- id: unity-catalog
+  url: https://docs.databricks.com/aws/en/data-governance/
+  allowed_path_prefixes:
+    - /aws/en/data-governance/unity-catalog
+  category: unity-catalog
+  max_pages: 250
+- id: ai-gateway
+  url: https://docs.databricks.com/aws/en/ai-gateway/
+  allowed_path_prefixes:
+    - /aws/en/ai-gateway
+  category: ai-gateway
+  max_pages: 250
+- id: omnigent
+  url: https://docs.databricks.com/aws/en/omnigent/
+  allowed_path_prefixes:
+    - /aws/en/omnigent
+  category: omnigent
+  max_pages: 250
+- id: security
+  url: https://docs.databricks.com/aws/en/security/
+  allowed_path_prefixes:
+    - /aws/en/security
+  category: security
+  max_pages: 250

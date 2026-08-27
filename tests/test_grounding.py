@@ -67,6 +67,18 @@ def test_grounding_trace_preserves_model_labels_before_display_renumbering():
     assert trace.parsed_citation_labels == ("S1", "S3")
 
 
+def test_grounded_answer_accepts_comma_separated_citations():
+    answer, trace = answer_groundedly_with_trace(
+        "What is Genie?",
+        [_result(chunk_id="first"), _result(chunk_id="second"), _result(chunk_id="third")],
+        FakeProvider("First [S1, S3]."),
+        threshold=0.3,
+    )
+    assert answer.supported
+    assert answer.text == "First [S1, S2]."
+    assert trace.parsed_citation_labels == ("S1", "S3")
+
+
 def test_grounding_trace_records_uncited_model_fallback_reason():
     answer, trace = answer_groundedly_with_trace(
         "What is Genie?", [_result()], FakeProvider("I cannot verify this."), threshold=0.3

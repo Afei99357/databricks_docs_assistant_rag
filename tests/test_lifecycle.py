@@ -28,5 +28,11 @@ def test_successful_fetch_resets_missing_counter():
 
 def test_content_hash_drives_reindexing():
     assert needs_reindex(DocumentState(status="ok", content_hash="new", indexed_content_hash="old"))
-    assert not needs_reindex(DocumentState(status="ok", content_hash="same", indexed_content_hash="same"))
+    assert not needs_reindex(
+        DocumentState(status="ok", content_hash="same", indexed_content_hash="same")
+    )
 
+
+def test_source_last_updated_can_conservatively_request_reindexing():
+    state = DocumentState(status="ok", content_hash="same", indexed_content_hash="same")
+    assert needs_reindex(state, source_last_updated_changed=True)

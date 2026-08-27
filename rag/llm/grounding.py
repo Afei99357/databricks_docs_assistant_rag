@@ -8,7 +8,8 @@ from dataclasses import dataclass, replace
 from rag.llm.providers import AnswerProvider
 from rag.models import Answer, Citation, RetrievalResult
 
-LABEL = re.compile(r"\[(S\d+)\]")
+CITATION = re.compile(r"\[((?:S\d+)(?:\s*,\s*S\d+)*)\]")
+LABEL = re.compile(r"S\d+")
 
 
 @dataclass(frozen=True)
@@ -133,7 +134,13 @@ def answer_groundedly_with_trace(
             unverified_points=unverified_points,
         )
     )
-    labels = tuple(dict.fromkeys(LABEL.findall(raw_model_output)))
+    labels = tuple(
+        dict.fromkeys(
+            label
+            for citation in CITATION.findall(raw_model_output)
+            for label in LABEL.findall(citation)
+        )
+    )
     valid_labels = set(labels).intersection(citation.label for citation in citations)
     if not labels:
         return Answer(
@@ -153,8 +160,10 @@ def answer_groundedly_with_trace(
         ), GroundingTrace(raw_model_output, labels, "invalid_citation_labels")
     cited = tuple(citation for citation in citations if citation.label in valid_labels)
     renumbered = {citation.label: f"S{index}" for index, citation in enumerate(cited, 1)}
-    text = LABEL.sub(
-        lambda match: f"[{renumbered.get(match.group(1), match.group(1))}]",
+    text = CITATION.sub(
+        lambda match: "["
+        + ", ".join(renumbered.get(label, label) for label in LABEL.findall(match.group(1)))
+        + "]",
         raw_model_output,
     )
     citations = tuple(replace(citation, label=renumbered[citation.label]) for citation in cited)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
@@ -26,6 +28,10 @@ CATEGORIES = frozenset(
         "multi-agent-apps",
         "uc-permissions-security",
         "databricks-apps",
+        "unity-catalog",
+        "ai-gateway",
+        "omnigent",
+        "security",
     }
 )
 TRACKING_PARAMS = {
@@ -55,6 +61,17 @@ class CuratedDoc:
     cloud: str
     reason: str
     source_scope: str = "supplemental"
+
+
+@dataclass(frozen=True)
+class DiscoveryRoot:
+    """A bounded official-documentation crawl boundary."""
+
+    root_id: str
+    landing_url: str
+    allowed_path_prefixes: tuple[str, ...]
+    category: str
+    max_pages: int = 250
 
 
 def canonicalize_url(url: str) -> str:
@@ -92,6 +109,96 @@ def _genie_category(url: str) -> str:
     if path in {"/aws/en/genie-agents/set-up", "/aws/en/genie-agents/tune-quality"}:
         return "knowledge-store-instructions"
     return "genie-concepts"
+
+
+def load_discovery_roots(yaml_path: str | Path) -> list[DiscoveryRoot]:
+    raw_entries = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8"))
+    if not isinstance(raw_entries, list):
+        raise SourcesValidationError(f"{yaml_path} must contain a YAML list")
+    roots, seen = [], set()
+    for index, entry in enumerate(raw_entries):
+        if not isinstance(entry, dict):
+            raise SourcesValidationError(f"root {index} is not a mapping")
+        root_id, url = entry.get("id"), entry.get("url")
+        prefixes, category = entry.get("allowed_path_prefixes"), entry.get("category")
+        max_pages = entry.get("max_pages", 250)
+        if not isinstance(root_id, str) or not root_id:
+            raise SourcesValidationError(f"root {index} missing a non-empty id")
+        if root_id in seen:
+            raise SourcesValidationError(f"duplicate root id {root_id!r}")
+        if not isinstance(url, str) or urlsplit(url).scheme not in {"http", "https"}:
+            raise SourcesValidationError(f"root {root_id!r} missing an http(s) url")
+        if (
+            not isinstance(prefixes, list)
+            or not prefixes
+            or not all(isinstance(item, str) and item.startswith("/") for item in prefixes)
+        ):
+            raise SourcesValidationError(f"root {root_id!r} needs non-empty allowed_path_prefixes")
+        if category not in CATEGORIES:
+            raise SourcesValidationError(f"root {root_id!r} has unknown category {category!r}")
+        if not isinstance(max_pages, int) or not 1 <= max_pages <= 250:
+            raise SourcesValidationError(f"root {root_id!r} max_pages must be between 1 and 250")
+        seen.add(root_id)
+        roots.append(
+            DiscoveryRoot(root_id, canonicalize_url(url), tuple(prefixes), category, max_pages)
+        )
+    return roots
+
+
+def _allowed_discovery_url(url: str, root: DiscoveryRoot) -> bool:
+    parts = urlsplit(url)
+    return parts.netloc == "docs.databricks.com" and any(
+        parts.path == prefix.rstrip("/") or parts.path.startswith(prefix)
+        for prefix in root.allowed_path_prefixes
+    )
+
+
+def discover_root(
+    root: DiscoveryRoot,
+    fetch_html: Callable[[str, str], object],
+) -> list[CuratedDoc]:
+    """Recursively discover one configured root without leaving its boundary.
+
+    ``fetch_html`` intentionally accepts the same ``doc_id, url`` shape as the
+    ingestion fetcher, which keeps this policy testable without live HTTP.
+    """
+    queue = deque([root.landing_url])
+    seen = {root.landing_url}
+    docs: list[CuratedDoc] = []
+    while queue:
+        url = queue.popleft()
+        result = fetch_html(compute_doc_id(url), url)
+        if getattr(result, "outcome", None) != "ok" or not getattr(result, "html", None):
+            raise RuntimeError(
+                f"discovery root {root.root_id!r} failed at {url}: {getattr(result, 'error_message', 'unknown error')}"
+            )
+        category = _genie_category(url) if root.root_id == "genie" else root.category
+        docs.append(
+            CuratedDoc(
+                url,
+                url,
+                compute_doc_id(url),
+                compute_slug(url),
+                category,
+                "aws",
+                f"Automatically discovered from {root.root_id}",
+                f"discovered:{root.root_id}",
+            )
+        )
+        for anchor in BeautifulSoup(result.html, "lxml").find_all("a", href=True):
+            href = anchor["href"]
+            if href.startswith("#"):
+                continue
+            candidate = canonicalize_url(urljoin(url, href))
+            if not _allowed_discovery_url(candidate, root) or candidate in seen:
+                continue
+            if len(seen) >= root.max_pages:
+                raise RuntimeError(
+                    f"discovery root {root.root_id!r} exceeds its {root.max_pages}-page limit"
+                )
+            seen.add(candidate)
+            queue.append(candidate)
+    return docs
 
 
 def discover_genie_core(html: str, *, landing_url: str = GENIE_LANDING_URL) -> list[CuratedDoc]:

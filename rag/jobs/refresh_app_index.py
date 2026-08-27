@@ -9,7 +9,7 @@ from rag.config import Settings
 from rag.index.embeddings import DatabricksEmbeddingProvider
 from rag.index.runtime import app_snapshot_root
 from rag.store import DatabricksStore
-from rag.workflow import publish_volume_snapshot, refresh_sources
+from rag.workflow import load_current_chunks, publish_volume_snapshot, refresh_sources
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,8 +19,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warehouse-id", required=True)
     parser.add_argument("--artifact-volume", default="rag_artifacts")
     parser.add_argument("--embedding-endpoint", default="databricks-qwen3-embedding-0-6b")
-    parser.add_argument("--embedding-batch-size", type=int, default=10)
-    parser.add_argument("--embedding-min-interval-seconds", type=float, default=2.0)
+    parser.add_argument("--embedding-batch-size", type=int, default=30)
+    parser.add_argument("--embedding-min-interval-seconds", type=float, default=0.5)
     parser.add_argument("--schema-sql-path", required=True)
     return parser.parse_args()
 
@@ -43,13 +43,21 @@ def main() -> None:
         artifact_volume=settings.artifact_volume,
     )
     print("refreshing configured documentation sources...", flush=True)
-    chunks = refresh_sources(
+    refreshed = refresh_sources(
         store,
         document_table=f"{settings.namespace}.rag_documents",
         chunk_table=f"{settings.namespace}.rag_chunks",
     )
-    if not chunks:
-        raise RuntimeError("source refresh produced no chunks")
+    snapshot_table = f"{settings.namespace}.rag_index_snapshots"
+    if store.active_snapshot_fingerprint(snapshot_table) == refreshed.corpus_fingerprint:
+        print(
+            "App snapshot already matches the refreshed corpus; skipping embedding build.",
+            flush=True,
+        )
+        return
+    chunks = load_current_chunks(
+        store, f"{settings.namespace}.rag_chunks", f"{settings.namespace}.rag_documents"
+    )
     print(f"publishing App snapshot from {len(chunks)} chunks...", flush=True)
     embedder = DatabricksEmbeddingProvider(
         args.embedding_endpoint,
@@ -62,6 +70,8 @@ def main() -> None:
         volume_path=app_snapshot_root(settings.volume_path),
         chunks=chunks,
         embedder=embedder,
+        corpus_fingerprint=refreshed.corpus_fingerprint,
+        document_table=f"{settings.namespace}.rag_documents",
     )
     print(
         f"published App snapshot {published.metadata.snapshot_id} "

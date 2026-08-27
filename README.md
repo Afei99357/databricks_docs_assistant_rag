@@ -99,8 +99,11 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
    just serve
    ```
 
-Run `just index` again whenever you want to refresh the configured documentation sources and
-rebuild the local index.
+Run `just index` whenever you want to refresh documentation. It checks configured discovery
+roots recursively (bounded to 250 pages per root) plus the manual supplements in
+`rag/ingest/config/curated_urls.yaml`. It only rewrites changed document chunks. A local FAISS
+snapshot is rebuilt only when the governed corpus fingerprint differs from the local active
+snapshot; a date change published by Databricks also requests a conservative rebuild.
 
 The local server does not use the Databricks App service principal, OBO identity, or hosted
 model endpoints.
@@ -277,9 +280,13 @@ just deploy-code
 applies idempotent schema creation, and none of these commands crawl sources, create embeddings, or
 replace the active FAISS snapshot.
 
-To update documentation, run the bootstrap Bundle's Workflow again from **Workflows** (or run `just bootstrap-run`). It creates a new
-validated snapshot and atomically marks it active; the previous active snapshot remains usable if
-the refresh fails.
+To update documentation, run the bootstrap Bundle's Workflow again from **Workflows** (or run
+`just bootstrap-run`). It recursively checks the bounded official roots in
+`rag/ingest/config/discovery_roots.yaml` and the manual supplement list. Unchanged sources do not
+create embeddings or a new snapshot. A changed corpus creates a validated immutable snapshot and
+atomically marks it active; the previous active snapshot remains usable if refresh or publication
+fails. A direct 404, or removal from the configured source lists, must be confirmed in three runs
+before a page is removed.
 
 To deploy code/configuration changes, run `just deploy-code`. If the ingestion
 code, SQL schema, source configuration, or embedding endpoint changed, redeploy the bootstrap

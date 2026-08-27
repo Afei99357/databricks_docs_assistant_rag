@@ -17,6 +17,11 @@ class Document:
     content_hash: str | None
     document_version: str | None
     status: str
+    source_origins: tuple[str, ...] = ()
+    indexed_content_hash: str | None = None
+    indexed_source_last_updated: str | None = None
+    consecutive_404_count: int = 0
+    error_message: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,7 @@ class IndexSnapshot:
     artifact_path: str
     status: str
     created_at: datetime
+    corpus_fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -65,4 +71,3 @@ class Answer:
     supported: bool
     provider: str
     snapshot_id: str
-

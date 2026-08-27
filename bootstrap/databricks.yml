@@ -4,6 +4,12 @@ bundle:
 include:
   - ../resources/ingestion_job.yml
 
+artifacts:
+  databricks_docs_rag:
+    type: whl
+    path: ..
+    build: python3 -m pip wheel --no-deps --wheel-dir dist .
+
 sync:
   paths:
     - ..
@@ -25,6 +31,12 @@ variables:
     default: ""
   embedding_endpoint:
     default: databricks-qwen3-embedding-0-6b
+  node_type_id:
+    description: Classic single-node Job VM type.
+    default: Standard_DS3_v2
+  spark_version:
+    description: Databricks Runtime version for the refresh Job cluster.
+    default: 16.4.x-scala2.12
 
 targets:
   dev:
