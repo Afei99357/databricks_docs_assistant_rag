@@ -59,6 +59,22 @@ class ToolStep:
     detail: str | None = None
 
 
+def _progress_event(step: ToolStep) -> dict:
+    """Expose completed retrieval activity without exposing model reasoning."""
+    action = {
+        "search_docs": "Searched documentation",
+        "read_chunks": "Read relevant sections",
+        "search_within_document": "Refined within a document",
+        "get_related_chunks": "Read related sections",
+        "final": "Selected supporting evidence",
+    }.get(step.action, "Processed retrieval activity")
+    count = len(step.candidate_ids or step.chunk_ids or step.selected_chunk_ids)
+    return {
+        "kind": "step", "turn": step.turn, "action": step.action, "status": step.status,
+        "query": step.query, "count": count, "message": action,
+    }
+
+
 @dataclass(frozen=True)
 class RetrievalTrace:
     queries: tuple[str, ...]
@@ -495,7 +511,7 @@ class RetrievalAgent:
 
     # -- the loop -----------------------------------------------------------
 
-    def retrieve(self, question: str) -> list[RetrievalResult]:
+    def retrieve(self, question: str, *, on_progress: Callable[[dict], None] | None = None) -> list[RetrievalResult]:
         session = _Session(question)
         started = perf_counter()
         while True:
@@ -509,9 +525,15 @@ class RetrievalAgent:
                 session.notice("final_step", FINAL_STEP_MESSAGE)
             # A provider that cannot produce a tool call raises. There is no
             # degraded path here: a broken protocol is an outage, not an answer.
+            if on_progress:
+                on_progress({"kind": "preparing", "turn": session.turn_count + 1,
+                             "message": "Preparing the next documentation action."})
             calls = self._tool_calls(session, FINAL_TOOL if final_only else TOOLS)
             outcomes = self._dispatch_many(session, calls)
             session.record(calls, outcomes)
+            if on_progress:
+                for step in session.steps[-len(outcomes):]:
+                    on_progress(_progress_event(step))
             final = next((outcome for outcome in outcomes if outcome.evidence is not None), None)
             if final is not None:
                 return self._conclude(session, "agent_satisfied", final)

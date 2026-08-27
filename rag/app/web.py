@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import asdict
+from queue import Queue
+from threading import Thread
 from time import perf_counter
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 from rag.conversation import resolve_follow_up
 from rag.llm.grounding import answer_groundedly_with_trace
@@ -21,9 +24,59 @@ STARTER_QUESTIONS = [
 
 def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, threshold: float,
                feedback_sink: Callable[[dict], None] | None = None, history=None, identity=None,
-               trace_getter: Callable[[], object | None] | None = None, trace_sink=None) -> Flask:
+               trace_getter: Callable[[], object | None] | None = None, trace_sink=None,
+               progress_retrieve: Callable | None = None) -> Flask:
     app = Flask(__name__)
     app.config["STARTER_QUESTIONS"] = STARTER_QUESTIONS
+
+    def complete_answer(question, conversation_id, owner, prior_turns, on_progress=None):
+        started = perf_counter()
+        with capture_llm_usage() as llm_usage:
+            resolved_query = resolve_follow_up(question, prior_turns, provider) if prior_turns else question
+            if on_progress:
+                on_progress({"kind": "starting", "message": "Searching indexed documentation."})
+            if on_progress and progress_retrieve:
+                retrieved = progress_retrieve(resolved_query, on_progress=on_progress)
+            else:
+                retrieved = retrieve(resolved_query)
+            retrieval_trace = trace_getter() if trace_getter else None
+            if on_progress:
+                on_progress({"kind": "answering", "message": "Writing a grounded answer from the selected evidence."})
+            result, grounding_trace = answer_groundedly_with_trace(
+                question, retrieved, provider, threshold=threshold,
+                evidence_support=tuple(getattr(retrieval_trace, "evidence_support", ()) or ()),
+                unverified_points=tuple(getattr(retrieval_trace, "unverified_points", ()) or ()),
+            )
+        turn_id = None
+        if history and identity:
+            conversation_id = conversation_id or history.create(owner, question)
+            turn_id = history.append_turn(owner, conversation_id, question=question, resolved_query=resolved_query, answer=result,
+                                          citation_ids=[item.chunk_id for item in result.citations], latency_ms=round((perf_counter() - started) * 1000))
+        if trace_sink:
+            try:
+                trace_sink.record(turn_id=turn_id, conversation_id=conversation_id, owner=owner, question=question,
+                                  resolved_query=resolved_query, retrieval_trace=retrieval_trace,
+                                  results=retrieved, grounding_trace=grounding_trace, answer=result,
+                                  latency_ms=round((perf_counter() - started) * 1000), llm_usage=llm_usage)
+            except Exception:
+                app.logger.exception("failed to persist request trace")
+        return {"question": question, "answer": result.text, "supported": result.supported,
+                "provider": result.provider, "snapshot_id": result.snapshot_id,
+                "latency_ms": round((perf_counter() - started) * 1000),
+                "retrieved_chunk_ids": [item.chunk.chunk_id for item in retrieved],
+                "citations": [asdict(citation) for citation in result.citations], "conversation_id": conversation_id}
+
+    def request_context():
+        payload = request.get_json(silent=True) or {}
+        question = payload.get("question", "").strip()
+        if not question:
+            raise ValueError("Enter a question.")
+        conversation_id = payload.get("conversation_id") or None
+        owner = identity.current_user_id(request) if history and identity else None
+        prior_turns = history.turns_for(owner, conversation_id) if conversation_id else []
+        if conversation_id and history and not prior_turns:
+            raise LookupError("Conversation not found.")
+        return question, conversation_id, owner, prior_turns
 
     @app.errorhandler(PermissionError)
     def forbidden(error):
@@ -74,43 +127,45 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
 
     @app.post("/api/answer")
     def answer():
-        payload = request.get_json(silent=True) or {}
-        question = payload.get("question", "").strip()
-        if not question:
+        try:
+            question, conversation_id, owner, prior_turns = request_context()
+        except ValueError as error:
+            return jsonify({"error": str(error)}), 400
+        except LookupError as error:
+            return jsonify({"error": str(error)}), 404
+        return jsonify(complete_answer(question, conversation_id, owner, prior_turns))
+
+    @app.post("/api/answer/stream")
+    def answer_stream():
+        try:
+            question, conversation_id, owner, prior_turns = request_context()
+        except ValueError:
             return jsonify({"error": "Enter a question."}), 400
-        conversation_id = payload.get("conversation_id") or None
-        owner = identity.current_user_id(request) if history and identity else None
-        prior_turns = history.turns_for(owner, conversation_id) if conversation_id else []
-        if conversation_id and history and not prior_turns:
-            return jsonify({"error": "Conversation not found."}), 404
-        started = perf_counter()
-        with capture_llm_usage() as llm_usage:
-            resolved_query = resolve_follow_up(question, prior_turns, provider) if prior_turns else question
-            retrieved = retrieve(resolved_query)
-            retrieval_trace = trace_getter() if trace_getter else None
-            result, grounding_trace = answer_groundedly_with_trace(
-                question, retrieved, provider, threshold=threshold,
-                evidence_support=tuple(getattr(retrieval_trace, "evidence_support", ()) or ()),
-                unverified_points=tuple(getattr(retrieval_trace, "unverified_points", ()) or ()),
-            )
-        turn_id = None
-        if history and identity:
-            conversation_id = conversation_id or history.create(owner, question)
-            turn_id = history.append_turn(owner, conversation_id, question=question, resolved_query=resolved_query, answer=result,
-                                          citation_ids=[item.chunk_id for item in result.citations], latency_ms=round((perf_counter() - started) * 1000))
-        if trace_sink:
+        except LookupError as error:
+            return jsonify({"error": str(error)}), 404
+        events: Queue[tuple[str, dict]] = Queue()
+
+        def run():
             try:
-                trace_sink.record(turn_id=turn_id, conversation_id=conversation_id, owner=owner, question=question,
-                                  resolved_query=resolved_query, retrieval_trace=retrieval_trace,
-                                  results=retrieved, grounding_trace=grounding_trace, answer=result,
-                                  latency_ms=round((perf_counter() - started) * 1000), llm_usage=llm_usage)
-            except Exception:
-                app.logger.exception("failed to persist request trace")
-        return jsonify({"question": question, "answer": result.text, "supported": result.supported,
-                        "provider": result.provider, "snapshot_id": result.snapshot_id,
-                        "latency_ms": round((perf_counter() - started) * 1000),
-                        "retrieved_chunk_ids": [item.chunk.chunk_id for item in retrieved],
-                        "citations": [asdict(citation) for citation in result.citations], "conversation_id": conversation_id})
+                events.put(("answer", complete_answer(question, conversation_id, owner, prior_turns,
+                                                       on_progress=lambda event: events.put(("progress", event)))))
+            except Exception as error:
+                app.logger.exception("streamed answer failed")
+                events.put(("error", {"error": str(error) or "The request could not be completed."}))
+            finally:
+                events.put(("done", {}))
+
+        Thread(target=run, daemon=True).start()
+
+        @stream_with_context
+        def stream():
+            while True:
+                event, payload = events.get()
+                yield f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+                if event == "done":
+                    break
+
+        return Response(stream(), mimetype="text/event-stream", headers={"Cache-Control": "no-cache"})
 
     @app.post("/api/feedback")
     def feedback():
