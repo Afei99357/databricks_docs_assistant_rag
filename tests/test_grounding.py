@@ -21,6 +21,16 @@ def test_grounded_answer_keeps_only_cited_sources():
     assert "[S1]" in build_prompt("What?", [_result()])
 
 
+def test_grounding_prompt_respects_the_retrieval_selection_scope():
+    prompt = build_prompt(
+        "What is Genie?", [_result()],
+        evidence_support=({"chunk_id": "c", "supports": ("the documented definition",)},),
+        unverified_points=("pricing",),
+    )
+    assert "[S1] may be used only for: the documented definition" in prompt
+    assert "pricing" in prompt
+
+
 def test_low_relevance_refuses_without_calling_provider():
     answer = answer_groundedly("Unknown", [_result(0.1)], FakeProvider("unsafe"), threshold=0.3)
     assert not answer.supported

@@ -4,9 +4,9 @@ from __future__ import annotations
 import json
 import re
 import tempfile
+from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Sequence
 
 from rag.index.embeddings import EmbeddingProvider
 from rag.models import Chunk, RetrievalResult
@@ -52,7 +52,7 @@ class FaissSnapshot:
         self.index, self.chunks, self.snapshot_id = index, chunks, snapshot_id
 
     @classmethod
-    def build(cls, chunks: Sequence[Chunk], embedder: EmbeddingProvider, snapshot_id: str) -> "FaissSnapshot":
+    def build(cls, chunks: Sequence[Chunk], embedder: EmbeddingProvider, snapshot_id: str) -> FaissSnapshot:
         if not chunks:
             raise ValueError("cannot build an index with no chunks")
         faiss, np = _faiss()
@@ -82,7 +82,7 @@ class FaissSnapshot:
         return index_path, map_path
 
     @classmethod
-    def load(cls, directory: str | Path, snapshot_id: str) -> "FaissSnapshot":
+    def load(cls, directory: str | Path, snapshot_id: str) -> FaissSnapshot:
         faiss, _ = _faiss()
         directory = Path(directory)
         chunks = [_chunk_from_dict(value) for value in json.loads((directory / "chunk_map.json").read_text(encoding="utf-8"))]

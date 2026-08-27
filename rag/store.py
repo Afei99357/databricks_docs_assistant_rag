@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -95,12 +95,17 @@ class DatabricksFeedbackSink:
 class DatabricksRequestTraceSink:
     """Persist final-answer diagnostics without storing the full model prompt."""
 
-    def __init__(self, store: DatabricksStore, table: str, *, provider: str, model: str):
+    def __init__(self, store: DatabricksStore, table: str, *, provider: str, model: str,
+                 retrieval_table: str | None = None, agent_provider: str | None = None,
+                 agent_model: str | None = None):
         self.store, self.table, self.provider, self.model = store, table, provider, model
+        self.retrieval_table = retrieval_table
+        self.agent_provider = agent_provider or provider
+        self.agent_model = agent_model or model
 
     def record(self, *, turn_id: str | None, conversation_id: str | None, owner: str | None,
                question: str, resolved_query: str, retrieval_trace, results, grounding_trace,
-               answer, latency_ms: int) -> None:
+               answer, latency_ms: int, llm_usage=()) -> None:
         evidence = [
             {"chunk_id": item.chunk.chunk_id, "score": item.score, "title": item.chunk.source_title,
              "heading_path": item.chunk.heading_path, "source_url": item.chunk.source_url}
@@ -108,12 +113,30 @@ class DatabricksRequestTraceSink:
         ]
         queries = tuple(getattr(retrieval_trace, "queries", ()) or ())
         selected = tuple(getattr(retrieval_trace, "selected_chunk_ids", ()) or ())
+        steps = [
+            {
+                "turn": step.turn, "action": step.action, "status": step.status, "query": step.query,
+                "chunk_ids": step.chunk_ids, "candidate_ids": step.candidate_ids,
+                "selected_chunk_ids": step.selected_chunk_ids,
+                "candidate_cards": step.candidate_cards, "detail": step.detail,
+            }
+            for step in tuple(getattr(retrieval_trace, "steps", ()) or ())
+        ]
         values = {
             "trace_id": uuid4().hex, "turn_id": turn_id, "conversation_id": conversation_id,
             "owner_user_id": owner, "user_question": question, "resolved_query": resolved_query,
             "retrieval_queries": "array(" + ",".join(sql_literal(value) for value in queries) + ")",
             "retrieval_status": getattr(retrieval_trace, "status", "unavailable"),
-            "selected_evidence_json": json.dumps({"selected_chunk_ids": selected, "evidence": evidence}),
+            "selected_evidence_json": json.dumps({
+                "selected_chunk_ids": selected, "evidence": evidence,
+                "tool_steps": steps,
+                "stop_reason": getattr(retrieval_trace, "stop_reason", None),
+                "agent_provider": self.agent_provider,
+                "agent_model": self.agent_model,
+                "evidence_support": getattr(retrieval_trace, "evidence_support", ()),
+                "unverified_points": getattr(retrieval_trace, "unverified_points", ()),
+                "llm_calls": [asdict(call) if is_dataclass(call) else call for call in llm_usage],
+            }),
             "raw_model_output": grounding_trace.raw_model_output,
             "parsed_citation_labels": "array(" + ",".join(sql_literal(value) for value in grounding_trace.parsed_citation_labels) + ")",
             "fallback_reason": grounding_trace.fallback_reason, "final_answer_text": answer.text,
@@ -122,4 +145,18 @@ class DatabricksRequestTraceSink:
         }
         raw = {"retrieval_queries", "parsed_citation_labels", "created_at"}
         rendered = ", ".join(value if key in raw else sql_literal(value) for key, value in values.items())
+        trace_id = values["trace_id"]
         self.store.execute(f"INSERT INTO {self.table} ({', '.join(values)}) VALUES ({rendered})")
+        if self.retrieval_table and turn_id:
+            for number, step in enumerate(steps, 1):
+                columns = {
+                    "trace_id": trace_id, "turn_id": turn_id, "search_number": number,
+                    "search_query": step["query"] or step["action"],
+                    "retrieved_chunk_ids": "array(" + ",".join(sql_literal(value) for value in step["candidate_ids"]) + ")",
+                    "selected_chunk_ids": "array(" + ",".join(sql_literal(value) for value in step["selected_chunk_ids"]) + ")",
+                    "agent_decision": json.dumps(step), "created_at": "current_timestamp()",
+                    "latency_ms": latency_ms,
+                }
+                raw = {"retrieved_chunk_ids", "selected_chunk_ids", "created_at"}
+                rendered = ", ".join(value if key in raw else sql_literal(value) for key, value in columns.items())
+                self.store.execute(f"INSERT INTO {self.retrieval_table} ({', '.join(columns)}) VALUES ({rendered})")

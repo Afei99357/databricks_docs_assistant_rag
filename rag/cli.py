@@ -8,6 +8,8 @@ from pathlib import Path
 
 from rag.agent.retrieval import RetrievalAgent
 from rag.config import Settings
+from rag.evaluate import evaluate as run_evaluation
+from rag.evaluate import format_header, format_row, format_summary, load_cases
 from rag.history import ConversationRepository
 from rag.identity import LocalTestIdentityProvider
 from rag.index.embeddings import OllamaEmbeddingProvider
@@ -18,7 +20,7 @@ from rag.ingest.sources import (
     discover_genie_core,
     load_curated_docs,
 )
-from rag.llm.providers import DatabricksEndpointProvider, OllamaProvider
+from rag.llm.providers import DatabricksEndpointProvider, OllamaProvider, OpenAICompatibleProvider
 from rag.store import DatabricksFeedbackSink, DatabricksRequestTraceSink, DatabricksStore
 from rag.workflow import (
     build_snapshot,
@@ -51,27 +53,56 @@ def setup_db() -> None:
     print(f"initialized {settings.namespace}")
 
 
-def serve() -> None:
-    settings = Settings.from_env()
+def _local_stack(settings: Settings):
+    """The retriever and answer provider the local commands share."""
     root = os.getenv("RAG_LOCAL_INDEX_DIR")
     if not root:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to downloaded local snapshot artifacts")
     embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.ollama_base_url)
-    retriever = ActiveSnapshotRetriever(root, embedder, settings.top_k)
-    provider = (
-        OllamaProvider(settings.ollama_base_url, settings.ollama_model)
-        if settings.answer_provider == "ollama"
-        else DatabricksEndpointProvider(
-            settings.databricks_chat_endpoint, profile=settings.databricks_profile
-        )
-    )
+    if settings.answer_provider == "ollama":
+        provider = OllamaProvider(settings.ollama_base_url, settings.ollama_model)
+    elif settings.answer_provider == "openai-compatible":
+        if not settings.openai_base_url or not settings.openai_model:
+            raise ValueError("openai-compatible ANSWER_PROVIDER requires OPENAI_BASE_URL and OPENAI_MODEL")
+        provider = OpenAICompatibleProvider(settings.openai_base_url, settings.openai_model,
+                                            api_key=settings.openai_api_key or "local")
+    else:
+        provider = DatabricksEndpointProvider(settings.databricks_chat_endpoint, profile=settings.databricks_profile)
+    if bool(settings.agent_base_url) != bool(settings.agent_model):
+        raise ValueError("set both RAG_AGENT_BASE_URL and RAG_AGENT_MODEL, or neither")
+    agent_provider = (OpenAICompatibleProvider(settings.agent_base_url, settings.agent_model,
+                                                api_key=settings.agent_api_key or "local")
+                      if settings.agent_base_url else provider)
+    return ActiveSnapshotRetriever(root, embedder, settings.top_k), provider, agent_provider
+
+
+def evaluate(mode: str) -> None:
+    """Run the question battery and print the per-case table."""
+    settings = Settings.from_env()
+    retriever, _provider, agent_provider = _local_stack(settings)
+    retrieve = (retriever.retrieve if mode == "plain"
+                else RetrievalAgent(retriever, agent_provider).retrieve)
+    cases = load_cases()
+    print(f"evaluating {len(cases)} questions against {mode} retrieval", flush=True)
+    print(format_header(), flush=True)
+    # Cases are printed as they finish: an agent run takes minutes, and a table
+    # that only appears at the end is a table nobody watches.
+    counter = iter(range(1, len(cases) + 1))
+    report = run_evaluation(cases, retrieve,
+                            on_case=lambda outcome: print(format_row(next(counter), outcome), flush=True))
+    print(format_summary(report))
+
+
+def serve() -> None:
+    settings = Settings.from_env()
+    retriever, provider, agent_provider = _local_stack(settings)
     from rag.app.web import create_app
 
     store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
     feedback = DatabricksFeedbackSink(
         store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model
     )
-    agent = RetrievalAgent(retriever.retrieve, provider)
+    agent = RetrievalAgent(retriever, agent_provider)
     history = ConversationRepository(store, settings.namespace)
     identity = LocalTestIdentityProvider()
     create_app(
@@ -82,7 +113,11 @@ def serve() -> None:
         history=history,
         identity=identity,
         trace_getter=lambda: agent.last_trace,
-        trace_sink=DatabricksRequestTraceSink(store, f"{settings.namespace}.rag_request_traces", provider=provider.name, model=provider.model),
+        trace_sink=DatabricksRequestTraceSink(
+            store, f"{settings.namespace}.rag_request_traces", provider=provider.name, model=provider.model,
+            retrieval_table=f"{settings.namespace}.rag_retrieval_traces",
+            agent_provider=agent_provider.name, agent_model=agent_provider.model,
+        ),
     ).run(host="127.0.0.1", port=int(os.getenv("PORT", "8000")), debug=False)
 
 
@@ -142,6 +177,9 @@ def main() -> None:
     commands.add_parser("discover", help="fetch and list official source URLs")
     commands.add_parser("setup-db", help="create configured Delta tables and artifact Volume")
     commands.add_parser("serve", help="serve the active local snapshot through Flask")
+    evaluation = commands.add_parser("evaluate", help="run the question battery and report retrieval quality")
+    evaluation.add_argument("--mode", choices=("agent", "plain"), default="agent",
+                            help="investigate with the retrieval agent, or run one plain search per question")
     commands.add_parser(
         "build-app-snapshot",
         help="build and activate a Databricks-embedding snapshot in the artifact Volume",
@@ -151,6 +189,8 @@ def main() -> None:
         help="refresh sources and build an Ollama-embedding local FAISS snapshot",
     )
     args = parser.parse_args()
+    if args.command == "evaluate":
+        return evaluate(args.mode)
     {
         "discover": discover,
         "setup-db": setup_db,

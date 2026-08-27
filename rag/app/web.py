@@ -8,6 +8,7 @@ from flask import Flask, jsonify, render_template, request
 
 from rag.conversation import resolve_follow_up
 from rag.llm.grounding import answer_groundedly_with_trace
+from rag.llm.providers import capture_llm_usage
 from rag.models import RetrievalResult
 
 STARTER_QUESTIONS = [
@@ -82,10 +83,16 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         prior_turns = history.turns_for(owner, conversation_id) if conversation_id else []
         if conversation_id and history and not prior_turns:
             return jsonify({"error": "Conversation not found."}), 404
-        resolved_query = resolve_follow_up(question, prior_turns, provider) if prior_turns else question
         started = perf_counter()
-        retrieved = retrieve(resolved_query)
-        result, grounding_trace = answer_groundedly_with_trace(question, retrieved, provider, threshold=threshold)
+        with capture_llm_usage() as llm_usage:
+            resolved_query = resolve_follow_up(question, prior_turns, provider) if prior_turns else question
+            retrieved = retrieve(resolved_query)
+            retrieval_trace = trace_getter() if trace_getter else None
+            result, grounding_trace = answer_groundedly_with_trace(
+                question, retrieved, provider, threshold=threshold,
+                evidence_support=tuple(getattr(retrieval_trace, "evidence_support", ()) or ()),
+                unverified_points=tuple(getattr(retrieval_trace, "unverified_points", ()) or ()),
+            )
         turn_id = None
         if history and identity:
             conversation_id = conversation_id or history.create(owner, question)
@@ -94,9 +101,9 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         if trace_sink:
             try:
                 trace_sink.record(turn_id=turn_id, conversation_id=conversation_id, owner=owner, question=question,
-                                  resolved_query=resolved_query, retrieval_trace=trace_getter() if trace_getter else None,
+                                  resolved_query=resolved_query, retrieval_trace=retrieval_trace,
                                   results=retrieved, grounding_trace=grounding_trace, answer=result,
-                                  latency_ms=round((perf_counter() - started) * 1000))
+                                  latency_ms=round((perf_counter() - started) * 1000), llm_usage=llm_usage)
             except Exception:
                 app.logger.exception("failed to persist request trace")
         return jsonify({"question": question, "answer": result.text, "supported": result.supported,

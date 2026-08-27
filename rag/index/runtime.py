@@ -15,13 +15,39 @@ class ActiveSnapshotRetriever:
         self.root, self.embedder, self.top_k = Path(root), embedder, top_k
         self._snapshot: FaissSnapshot | None = None
 
-    def retrieve(self, question: str, top_k: int | None = None) -> list[RetrievalResult]:
+    def _active_snapshot(self) -> FaissSnapshot:
         snapshot_id = read_active_manifest(self.root)
         if not snapshot_id:
             raise RuntimeError("no active retrieval snapshot is available")
         if self._snapshot is None or self._snapshot.snapshot_id != snapshot_id:
             self._snapshot = FaissSnapshot.load(self.root / "snapshots" / snapshot_id, snapshot_id)
-        return self._snapshot.search(question, self.embedder, top_k or self.top_k)
+        return self._snapshot
+
+    def retrieve(self, question: str, top_k: int | None = None) -> list[RetrievalResult]:
+        return self._active_snapshot().search(question, self.embedder, top_k or self.top_k)
+
+    def read_chunks(self, chunk_ids: list[str]) -> list[RetrievalResult]:
+        snapshot = self._active_snapshot()
+        by_id = {chunk.chunk_id: chunk for chunk in snapshot.chunks}
+        return [RetrievalResult(by_id[chunk_id], 1.0, snapshot.snapshot_id) for chunk_id in chunk_ids if chunk_id in by_id]
+
+    def related_chunks(self, chunk_id: str, *, radius: int = 1) -> list[RetrievalResult]:
+        snapshot = self._active_snapshot()
+        target = next((chunk for chunk in snapshot.chunks if chunk.chunk_id == chunk_id), None)
+        if target is None:
+            return []
+        related = [
+            chunk for chunk in snapshot.chunks
+            if chunk.doc_id == target.doc_id
+            and chunk.document_version == target.document_version
+            and abs(chunk.position - target.position) <= radius
+        ]
+        return [RetrievalResult(chunk, 1.0, snapshot.snapshot_id) for chunk in sorted(related, key=lambda chunk: chunk.position)]
+
+    def search_within_document(self, source_url: str, question: str, top_k: int) -> list[RetrievalResult]:
+        snapshot = self._active_snapshot()
+        ranked = snapshot.search(question, self.embedder, len(snapshot.chunks))
+        return [item for item in ranked if item.chunk.source_url == source_url][:top_k]
 
 
 class VolumeSnapshotRetriever:
@@ -76,3 +102,15 @@ class VolumeSnapshotRetriever:
     def retrieve(self, question: str, top_k: int | None = None) -> list[RetrievalResult]:
         self._sync_active_snapshot()
         return self.local.retrieve(question, top_k)
+
+    def read_chunks(self, chunk_ids: list[str]) -> list[RetrievalResult]:
+        self._sync_active_snapshot()
+        return self.local.read_chunks(chunk_ids)
+
+    def related_chunks(self, chunk_id: str, *, radius: int = 1) -> list[RetrievalResult]:
+        self._sync_active_snapshot()
+        return self.local.related_chunks(chunk_id, radius=radius)
+
+    def search_within_document(self, source_url: str, question: str, top_k: int) -> list[RetrievalResult]:
+        self._sync_active_snapshot()
+        return self.local.search_within_document(source_url, question, top_k)

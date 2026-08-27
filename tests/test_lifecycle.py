@@ -1,4 +1,9 @@
-from rag.ingest.lifecycle import DocumentState, REMOVAL_THRESHOLD, apply_fetch_outcome, needs_reindex
+from rag.ingest.lifecycle import (
+    REMOVAL_THRESHOLD,
+    DocumentState,
+    apply_fetch_outcome,
+    needs_reindex,
+)
 
 
 def test_transient_failure_preserves_active_document():

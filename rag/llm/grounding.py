@@ -17,9 +17,20 @@ class GroundingTrace:
     fallback_reason: str | None
 
 
-def build_prompt(question: str, results: list[RetrievalResult]) -> str:
+def build_prompt(question: str, results: list[RetrievalResult], *, evidence_support: tuple[dict, ...] = (),
+                 unverified_points: tuple[str, ...] = ()) -> str:
     evidence = "\n\n".join(f"[S{i}] {result.chunk.source_title}\nURL: {result.chunk.source_url}\nExcerpt: {result.chunk.text}" for i, result in enumerate(results, 1))
-    return f"""You are an internal Databricks documentation assistant. Answer only from the indexed documentation excerpts below. The source set includes official Databricks documentation and approved supplemental guidance; identify a source as official only when its URL is on docs.databricks.com. Every factual claim must cite one or more source labels such as [S1]. Do not use background knowledge and do not infer a general product behavior from an excerpt that discusses a narrower context such as benchmarks, APIs, or trusted assets. For comparison questions, state only differences that are directly supported; explicitly say which requested differences the excerpts do not establish. If the excerpts support only part of a multi-part question, answer that supported part with citations and explicitly say which remaining part could not be verified. Reply exactly "I could not verify this from the indexed documentation." only when no part of the question is supported.
+    support_by_chunk = {item["chunk_id"]: item["supports"] for item in evidence_support}
+    selection = "\n".join(
+        f"[S{i}] may be used only for: {'; '.join(support_by_chunk.get(result.chunk.chunk_id, ()))}"
+        for i, result in enumerate(results, 1) if result.chunk.chunk_id in support_by_chunk
+    )
+    unresolved = "\n".join(f"- {point}" for point in unverified_points)
+    selection_rules = (f"\n\nRetrieval selection scope:\n{selection}\n"
+                       "Do not use a cited excerpt to establish a point outside its listed scope.") if selection else ""
+    unresolved_rules = (f"\n\nThe retrieval investigation could not verify these requested points:\n{unresolved}\n"
+                        "State that they could not be verified; do not infer an answer for them.") if unresolved else ""
+    return f"""You are an internal Databricks documentation assistant. Answer only from the indexed documentation excerpts below. The source set includes official Databricks documentation and approved supplemental guidance; identify a source as official only when its URL is on docs.databricks.com. Every factual claim must cite one or more source labels such as [S1]. Do not use background knowledge and do not infer a general product behavior from an excerpt that discusses a narrower context such as benchmarks, APIs, or trusted assets. For comparison questions, state only differences that are directly supported; explicitly say which requested differences the excerpts do not establish. If the excerpts support only part of a multi-part question, answer that supported part with citations and explicitly say which remaining part could not be verified. Reply exactly "I could not verify this from the indexed documentation." only when no part of the question is supported.{selection_rules}{unresolved_rules}
 
 Question: {question}
 
@@ -27,11 +38,16 @@ Indexed documentation excerpts:
 {evidence}"""
 
 
-def answer_groundedly(question: str, results: list[RetrievalResult], provider: AnswerProvider, *, threshold: float) -> Answer:
-    return answer_groundedly_with_trace(question, results, provider, threshold=threshold)[0]
+def answer_groundedly(question: str, results: list[RetrievalResult], provider: AnswerProvider, *, threshold: float,
+                      evidence_support: tuple[dict, ...] = (), unverified_points: tuple[str, ...] = ()) -> Answer:
+    return answer_groundedly_with_trace(question, results, provider, threshold=threshold,
+                                        evidence_support=evidence_support,
+                                        unverified_points=unverified_points)[0]
 
 
-def answer_groundedly_with_trace(question: str, results: list[RetrievalResult], provider: AnswerProvider, *, threshold: float) -> tuple[Answer, GroundingTrace]:
+def answer_groundedly_with_trace(question: str, results: list[RetrievalResult], provider: AnswerProvider, *, threshold: float,
+                                 evidence_support: tuple[dict, ...] = (),
+                                 unverified_points: tuple[str, ...] = ()) -> tuple[Answer, GroundingTrace]:
     """Answer from the retrieval agent's evidence without re-selecting it.
 
     Evidence selection belongs to retrieval. A second LLM selector here can
@@ -43,7 +59,9 @@ def answer_groundedly_with_trace(question: str, results: list[RetrievalResult], 
         return Answer("I could not verify this from the indexed documentation.", citations, False, provider.name, snapshot_id), GroundingTrace(None, (), "no_results")
     if results[0].score < threshold:
         return Answer("I could not verify this from the indexed documentation.", citations, False, provider.name, snapshot_id), GroundingTrace(None, (), "below_relevance_threshold")
-    raw_model_output = provider.complete(build_prompt(question, results))
+    raw_model_output = provider.complete(build_prompt(
+        question, results, evidence_support=evidence_support, unverified_points=unverified_points,
+    ))
     labels = tuple(dict.fromkeys(LABEL.findall(raw_model_output)))
     valid_labels = set(labels).intersection(citation.label for citation in citations)
     if not labels:
