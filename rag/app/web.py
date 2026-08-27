@@ -62,6 +62,15 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         rows = history.turns_for(owner, conversation_id)
         return jsonify({"turns": [{"turn_id": row[0], "turn_number": row[1], "question": row[2], "answer": row[3], "supported": row[4], "snapshot_id": row[5], "citation_chunk_ids": row[6], "created_at": row[7]} for row in rows]})
 
+    @app.delete("/api/conversations/<conversation_id>")
+    def delete_conversation(conversation_id):
+        if not history or not identity:
+            return jsonify({"error": "Conversation history is not enabled."}), 404
+        owner = identity.current_user_id(request)
+        if not history.delete(owner, conversation_id):
+            return jsonify({"error": "Conversation not found."}), 404
+        return ("", 204)
+
     @app.post("/api/answer")
     def answer():
         payload = request.get_json(silent=True) or {}

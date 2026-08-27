@@ -101,7 +101,13 @@ function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [deletingConversationId, setDeletingConversationId] = useState("");
   const [error, setError] = useState("");
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = Number(localStorage.getItem("rag-sidebar-width"));
+    return Number.isFinite(saved) && saved >= 270 && saved <= 520 ? saved : 270;
+  });
+  const [desktop, setDesktop] = useState(() => window.innerWidth > 760);
 
   const refreshHistory = async () => {
     const body = await json<{ conversations: Conversation[] }>("/api/conversations");
@@ -111,6 +117,11 @@ function App() {
   };
   useEffect(() => {
     refreshHistory().then((rows) => { if (rows.length) setHistoryOpen(true); }).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    const update = () => setDesktop(window.innerWidth > 760);
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
   }, []);
   const openHistory = async () => {
     const next = !historyOpen; setHistoryOpen(next); setError("");
@@ -125,6 +136,45 @@ function App() {
       setMessages(body.turns.flatMap((turn) => [{ role: "user" as const, content: turn.question }, { role: "assistant" as const, content: turn.answer }]));
       setHistoryOpen(false);
     } catch (reason) { setError((reason as Error).message); } finally { setBusy(false); }
+  };
+  const deleteConversation = async (id: string, event: MouseEvent) => {
+    event.stopPropagation();
+    if (busy || deletingConversationId) return;
+    const previousConversations = conversations;
+    const previousConversationId = conversationId;
+    const previousMessages = messages;
+    const previousQuestion = question;
+    const wasActive = conversationId === id;
+    setDeletingConversationId(id); setError("");
+    setConversations((current) => current.filter((conversation) => conversation.conversation_id !== id));
+    if (wasActive) newConversation();
+    try {
+      await json(`/api/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+    } catch (reason) {
+      setConversations(previousConversations);
+      if (wasActive) {
+        setConversationId(previousConversationId);
+        setMessages(previousMessages);
+        setQuestion(previousQuestion);
+      }
+      setError((reason as Error).message);
+    } finally { setDeletingConversationId(""); }
+  };
+  const startResize = (event: PointerEvent) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    const resize = (move: PointerEvent) => setSidebarWidth(Math.min(520, Math.max(270, startWidth + move.clientX - startX)));
+    const finish = () => {
+      window.removeEventListener("pointermove", resize);
+      window.removeEventListener("pointerup", finish);
+      setSidebarWidth((width) => {
+        localStorage.setItem("rag-sidebar-width", String(width));
+        return width;
+      });
+    };
+    window.addEventListener("pointermove", resize);
+    window.addEventListener("pointerup", finish);
   };
   const ask = async (event?: Event, starter?: string) => {
     event?.preventDefault();
@@ -141,12 +191,13 @@ function App() {
     } finally { setBusy(false); }
   };
 
-  return <main class="app-shell">
-    <aside class={`sidebar ${historyOpen ? "open" : ""}`} aria-label="Conversations">
+  return <main class="app-shell" style={{ gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)` }}>
+    <aside class={`sidebar ${historyOpen ? "open" : ""}`} aria-label="Conversations" style={{ position: "relative" }}>
       <div class="brand"><span class="brand-mark">D</span><div><strong>Databricks Docs</strong><small>Documentation Assistant</small></div></div>
       <button class="new-conversation" onClick={newConversation} disabled={busy}>＋ New conversation</button>
       <div class="history-heading"><span>History</span><button class="history-toggle" onClick={openHistory} aria-expanded={historyOpen}>{historyOpen ? "Hide" : "Show"}</button></div>
-      {historyOpen && <div class="history-list">{conversations.length ? conversations.map((conversation) => <button class={conversation.conversation_id === conversationId ? "active" : ""} onClick={() => loadConversation(conversation.conversation_id)} disabled={busy} key={conversation.conversation_id}>{conversation.title}</button>) : <p>No past conversations yet.</p>}</div>}
+      {historyOpen && <div class="history-list" style={{ overflowX: "hidden" }}>{conversations.length ? conversations.map((conversation) => <div class={`history-item ${conversation.conversation_id === conversationId ? "active" : ""}`} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", minWidth: 0, width: "100%" }} key={conversation.conversation_id}><button class="conversation-title" onClick={() => loadConversation(conversation.conversation_id)} disabled={busy || !!deletingConversationId} title={conversation.title} style={{ minWidth: 0, width: "100%" }}>{conversation.title}</button><button class="delete-conversation" onClick={(event) => deleteConversation(conversation.conversation_id, event)} disabled={busy || !!deletingConversationId} aria-label={`Delete ${conversation.title}`} title="Delete conversation">{deletingConversationId === conversation.conversation_id ? "…" : "×"}</button></div>) : <p>No past conversations yet.</p>}</div>}
+      {desktop && <div onPointerDown={startResize} role="separator" aria-orientation="vertical" aria-label="Resize conversation history" style={{ position: "absolute", top: "50%", right: -8, width: 16, height: 48, transform: "translateY(-50%)", display: "grid", placeItems: "center", background: "#1e4c72", border: "1px solid #6089ae", borderRadius: "0 .4rem .4rem 0", color: "#c9e3ff", cursor: "col-resize", userSelect: "none", zIndex: 2 }}>⋮</div>}
     </aside>
     <section class="chat-pane">
       <header class="topbar"><button class="mobile-history" onClick={openHistory} aria-label="Open conversation history">☰</button><div><h1>Databricks Documentation Assistant</h1><p>Answers grounded in indexed documentation</p></div><button class="new-mobile" onClick={newConversation} disabled={busy}>＋ New</button></header>

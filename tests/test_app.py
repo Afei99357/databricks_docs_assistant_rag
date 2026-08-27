@@ -25,6 +25,11 @@ class History:
         self.resolved.append(kwargs["resolved_query"])
         self.data.setdefault(conversation_id, []).append(("t", len(self.data.get(conversation_id, [])) + 1, kwargs["question"], kwargs["answer"].text, kwargs["answer"].supported, kwargs["answer"].snapshot_id, kwargs["citation_ids"], "today"))
 
+    def delete(self, owner, conversation_id):
+        if conversation_id not in self.data: return False
+        del self.data[conversation_id]
+        return True
+
 
 def test_answer_and_feedback_routes():
     received = []
@@ -71,6 +76,14 @@ def test_conversation_reuses_id_and_rewrites_follow_up():
     assert history.resolved == ["first question", "resolved follow-up"]
     assert client.get("/api/conversations").json["conversations"][0]["conversation_id"] == "c1"
     assert len(client.get("/api/conversations/c1/turns").json["turns"]) == 2
+
+
+def test_owner_can_remove_a_conversation_from_history():
+    history = History(); history.data["c1"] = []
+    app = create_app(retrieve=lambda _: [], provider=Provider(), threshold=.3, history=history, identity=Identity())
+    client = app.test_client()
+    assert client.delete("/api/conversations/c1").status_code == 204
+    assert client.delete("/api/conversations/c1").status_code == 404
 
 
 def test_unexpected_answer_error_is_json_not_an_html_error_page():
