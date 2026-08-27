@@ -59,13 +59,17 @@ def _local_stack(settings: Settings):
     if not root:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to downloaded local snapshot artifacts")
     embedder = OllamaEmbeddingProvider(settings.embedding_model, base_url=settings.ollama_base_url)
-    provider = (
-        OllamaProvider(settings.ollama_base_url, settings.ollama_model)
-        if settings.answer_provider == "ollama"
-        else DatabricksEndpointProvider(
-            settings.databricks_chat_endpoint, profile=settings.databricks_profile
-        )
-    )
+    if settings.answer_provider == "ollama":
+        provider = OllamaProvider(settings.ollama_base_url, settings.ollama_model)
+    elif settings.answer_provider == "openai-compatible":
+        answer_base_url = settings.answer_base_url or settings.agent_base_url
+        answer_model = settings.answer_model or settings.agent_model
+        if not answer_base_url or not answer_model:
+            raise ValueError("openai-compatible ANSWER_PROVIDER requires RAG_ANSWER_BASE_URL/RAG_ANSWER_MODEL or RAG_AGENT_BASE_URL/RAG_AGENT_MODEL")
+        provider = OpenAICompatibleProvider(answer_base_url, answer_model,
+                                            api_key=settings.answer_api_key or settings.agent_api_key or "local")
+    else:
+        provider = DatabricksEndpointProvider(settings.databricks_chat_endpoint, profile=settings.databricks_profile)
     agent_provider = (
         OpenAICompatibleProvider(settings.agent_base_url, settings.agent_model,
                                  api_key=settings.agent_api_key or "local")

@@ -22,6 +22,9 @@ class Settings:
     agent_base_url: str | None
     agent_model: str | None
     agent_api_key: str | None
+    answer_base_url: str | None
+    answer_model: str | None
+    answer_api_key: str | None
 
     @property
     def namespace(self) -> str:
@@ -45,4 +48,6 @@ class Settings:
                    os.getenv("OLLAMA_MODEL", "qwen3.5"), os.getenv("DATABRICKS_CHAT_ENDPOINT", "databricks-gpt-oss-20b"),
                    os.getenv("RAG_DATABRICKS_PROFILE") or None,
                    os.getenv("RAG_AGENT_BASE_URL") or None, os.getenv("RAG_AGENT_MODEL") or None,
-                   os.getenv("RAG_AGENT_API_KEY") or None)
+                   os.getenv("RAG_AGENT_API_KEY") or None,
+                   os.getenv("RAG_ANSWER_BASE_URL") or None, os.getenv("RAG_ANSWER_MODEL") or None,
+                   os.getenv("RAG_ANSWER_API_KEY") or None)
