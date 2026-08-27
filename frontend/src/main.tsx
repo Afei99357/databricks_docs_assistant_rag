@@ -9,6 +9,7 @@ type Answer = {
   question: string; answer: string; citations: Citation[]; conversation_id?: string;
   snapshot_id?: string; retrieved_chunk_ids?: string[]; latency_ms?: number;
 };
+type ResearchStep = { kind?: string; turn?: number; action?: string; status?: string; query?: string | null; count?: number; message?: string };
 type Conversation = { conversation_id: string; title: string; updated_at: string };
 type Turn = { turn_id: string; question: string; answer: string };
 type Message = { role: "user" | "assistant"; content: string; answer?: Answer };
@@ -25,6 +26,36 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.error || "The request could not be completed.");
   return body as T;
+}
+
+async function streamAnswer(payload: object, onProgress: (step: ResearchStep) => void): Promise<Answer> {
+  const response = await fetch("/api/answer/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+  if (!response.ok || !response.body) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error || "The request could not be completed.");
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let answer: Answer | undefined;
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const events = buffer.split("\n\n");
+    buffer = events.pop() || "";
+    for (const entry of events) {
+      const event = entry.match(/^event: (.+)$/m)?.[1];
+      const data = entry.match(/^data: (.+)$/m)?.[1];
+      if (!event || !data) continue;
+      const body = JSON.parse(data);
+      if (event === "progress") onProgress(body);
+      if (event === "answer") answer = body;
+      if (event === "error") throw new Error(body.error || "The request could not be completed.");
+    }
+    if (done) break;
+  }
+  if (!answer) throw new Error("The request ended before an answer was returned.");
+  return answer;
 }
 
 function markdown(text: string, citations: Citation[]) {
@@ -54,6 +85,22 @@ function References({ citations }: { citations: Citation[] }) {
   </details>;
 }
 
+function activityText(step: ResearchStep) {
+  const suffix = step.count ? ` (${step.count} section${step.count === 1 ? "" : "s"})` : "";
+  const fallback = ({ search_docs: "Searched documentation", read_chunks: "Read relevant sections", search_within_document: "Refined within a document", get_related_chunks: "Read related sections", final: "Selected supporting evidence" } as Record<string, string>)[step.action || ""] || "Updated research activity";
+  return `${step.message || fallback}${suffix}`;
+}
+
+function ResearchActivity({ steps, live = false }: { steps: ResearchStep[]; live?: boolean }) {
+  return <section class={`research-activity ${live ? "live" : ""}`} aria-live="polite">
+    <div class="research-heading">{live && <span class="spinner" />}<strong>{live ? "Researching documentation" : "Research activity"}</strong></div>
+    <ol>{steps.map((step, index) => <li key={`${step.turn || "status"}-${step.action || step.kind}-${index}`}>
+      <span class={`activity-mark ${step.kind === "preparing" ? "pending" : "done"}`}>{step.kind === "preparing" ? "•" : "✓"}</span>
+      <span>{activityText(step)}</span>{step.query && <code>{step.query}</code>}
+    </li>)}</ol>
+  </section>;
+}
+
 function Feedback({ answer }: { answer: Answer }) {
   const [rating, setRating] = useState<"up" | "down" | "">("");
   const [comment, setComment] = useState("");
@@ -78,7 +125,7 @@ function Feedback({ answer }: { answer: Answer }) {
   </section>;
 }
 
-function Transcript({ messages, busy }: { messages: Message[]; busy: boolean }) {
+function Transcript({ messages, busy, activity }: { messages: Message[]; busy: boolean; activity: ResearchStep[] }) {
   const end = useRef<HTMLDivElement>(null);
   useEffect(() => end.current?.scrollIntoView({ behavior: "smooth", block: "end" }), [messages, busy]);
   return <section class="transcript" aria-live="polite" aria-busy={busy}>
@@ -89,7 +136,7 @@ function Transcript({ messages, busy }: { messages: Message[]; busy: boolean }) 
         ? <><div class="answer-markdown" dangerouslySetInnerHTML={{ __html: markdown(message.content, message.answer.citations) }} /><References citations={message.answer.citations} /><Feedback answer={message.answer} /></>
         : <div class="plain-message">{message.content}</div>}
     </article>)}
-    {busy && <div class="searching" role="status"><span class="spinner" />Searching indexed documentation and checking the evidence…</div>}
+    {busy && <ResearchActivity steps={activity.length ? activity : [{ kind: "starting", message: "Starting documentation research." }]} live />}
     <div ref={end} />
   </section>;
 }
@@ -101,6 +148,7 @@ function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [activity, setActivity] = useState<ResearchStep[]>([]);
   const [deletingConversationId, setDeletingConversationId] = useState("");
   const [error, setError] = useState("");
   const [sidebarWidth, setSidebarWidth] = useState(() => {
@@ -127,7 +175,7 @@ function App() {
     const next = !historyOpen; setHistoryOpen(next); setError("");
     if (next) { try { await refreshHistory(); } catch (reason) { setError((reason as Error).message); } }
   };
-  const newConversation = () => { setConversationId(""); setMessages([]); setQuestion(""); setError(""); };
+  const newConversation = () => { setConversationId(""); setMessages([]); setQuestion(""); setError(""); setActivity([]); };
   const loadConversation = async (id: string) => {
     setBusy(true); setError("");
     try {
@@ -179,16 +227,16 @@ function App() {
   const ask = async (event?: Event, starter?: string) => {
     event?.preventDefault();
     const text = (starter || question).trim(); if (!text || busy) return;
-    setBusy(true); setError(""); setQuestion("");
+    setBusy(true); setError(""); setQuestion(""); setActivity([]);
     setMessages((current) => [...current, { role: "user", content: text }]);
     try {
-      const body = await json<Answer>("/api/answer", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: text, conversation_id: conversationId || undefined }) });
+      const body = await streamAnswer({ question: text, conversation_id: conversationId || undefined }, (step) => setActivity((current) => [...current, step]));
       setConversationId(body.conversation_id || conversationId);
       setMessages((current) => [...current, { role: "assistant", content: body.answer, answer: body }]);
     } catch (reason) {
       const message = (reason as Error).message; setError(message);
       setMessages((current) => [...current, { role: "assistant", content: message }]);
-    } finally { setBusy(false); }
+    } finally { setBusy(false); setActivity([]); }
   };
 
   return <main class="app-shell" style={{ gridTemplateColumns: `${sidebarWidth}px minmax(0, 1fr)` }}>
@@ -201,7 +249,7 @@ function App() {
     </aside>
     <section class="chat-pane">
       <header class="topbar"><button class="mobile-history" onClick={openHistory} aria-label="Open conversation history">☰</button><div><h1>Databricks Documentation Assistant</h1><p>Answers grounded in indexed documentation</p></div><button class="new-mobile" onClick={newConversation} disabled={busy}>＋ New</button></header>
-      <Transcript messages={messages} busy={busy} />
+      <Transcript messages={messages} busy={busy} activity={activity} />
       {error && <p class="error" role="alert">{error}</p>}
       <footer class="composer-area">
         {!messages.length && <div class="starter-list"><span>Try one:</span>{STARTERS.map((starter) => <button disabled={busy} onClick={() => ask(undefined, starter)} key={starter}>{starter}</button>)}</div>}

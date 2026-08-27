@@ -55,6 +55,24 @@ def test_answer_records_retrieval_and_grounding_trace_when_configured():
     assert received[0]["results"][0].chunk.chunk_id == "c"
 
 
+def test_streamed_answer_emits_retrieval_progress_and_a_final_answer():
+    chunk = Chunk("c", "d", "v", 0, "evidence", (), "https://docs.databricks.com/x", "Docs")
+
+    def live_retrieve(_, *, on_progress):
+        on_progress({"kind": "step", "turn": 1, "action": "search_docs", "status": "ok", "count": 1,
+                     "message": "Searched documentation"})
+        return [RetrievalResult(chunk, .9, "s")]
+
+    app = create_app(retrieve=lambda _: [RetrievalResult(chunk, .9, "s")], progress_retrieve=live_retrieve,
+                     provider=Provider(), threshold=.3)
+    response = app.test_client().post("/api/answer/stream", json={"question": "test"})
+
+    assert response.status_code == 200
+    assert b"event: progress" in response.data
+    assert b"Searched documentation" in response.data
+    assert b"event: answer" in response.data
+
+
 def test_home_serves_the_preact_application_shell():
     app = create_app(retrieve=lambda _: [], provider=Provider(), threshold=.3)
     response = app.test_client().get("/")

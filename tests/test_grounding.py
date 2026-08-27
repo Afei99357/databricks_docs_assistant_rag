@@ -31,6 +31,12 @@ def test_grounding_prompt_respects_the_retrieval_selection_scope():
     assert "pricing" in prompt
 
 
+def test_grounding_prompt_treats_the_index_as_official_documentation():
+    prompt = build_prompt("What is Genie?", [_result()])
+    assert "official Databricks documentation excerpts" in prompt
+    assert "identify a source as official" not in prompt
+
+
 def test_low_relevance_refuses_without_calling_provider():
     answer = answer_groundedly("Unknown", [_result(0.1)], FakeProvider("unsafe"), threshold=0.3)
     assert not answer.supported

@@ -47,6 +47,7 @@ def create_databricks_app():
         history=ConversationRepository(store, settings.namespace),
         identity=DatabricksAppIdentityProvider(),
         trace_getter=lambda: agent.last_trace,
+        progress_retrieve=agent.retrieve,
         trace_sink=DatabricksRequestTraceSink(
             store, f"{settings.namespace}.rag_request_traces", provider=provider.name, model=provider.model,
             retrieval_table=f"{settings.namespace}.rag_retrieval_traces",
