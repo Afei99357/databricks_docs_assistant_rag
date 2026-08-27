@@ -49,6 +49,16 @@ resources:
             securable_full_name: ${var.catalog}.${var.schema}.rag_request_traces
             securable_type: TABLE
             permission: MODIFY
+        - name: rag_retrieval_traces
+          uc_securable:
+            securable_full_name: ${var.catalog}.${var.schema}.rag_retrieval_traces
+            securable_type: TABLE
+            permission: MODIFY
+        - name: rag_retrieval_traces_read
+          uc_securable:
+            securable_full_name: ${var.catalog}.${var.schema}.rag_retrieval_traces
+            securable_type: TABLE
+            permission: SELECT
         - name: qwen_embedding
           serving_endpoint:
             name: ${var.embedding_endpoint}

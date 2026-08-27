@@ -120,6 +120,11 @@ class _OpenAIChatProvider:
 
     model: str
     extra_body: dict
+    # Some OpenAI-compatible runtimes can return several independent tool
+    # calls in a single assistant message. Databricks function calling does
+    # not support that transport option, while the agent's ``queries`` array
+    # still preserves its one-turn batched-search behavior there.
+    parallel_tool_calls = True
 
     def _client(self):
         raise NotImplementedError
@@ -151,8 +156,10 @@ class _OpenAIChatProvider:
         # tool_choice="required" is honoured by Databricks and ignored by
         # Ollama, which is why the agent's system prompt also states the
         # contract in words. Asking for it costs nothing where it works.
-        completion = self._create(messages, operation="tool_call", tools=tools,
-                                  tool_choice="required", parallel_tool_calls=True)
+        request = {"tools": tools, "tool_choice": "required"}
+        if self.parallel_tool_calls:
+            request["parallel_tool_calls"] = True
+        completion = self._create(messages, operation="tool_call", **request)
         return _tool_calls_from_openai(completion.choices[0].message)
 
     def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall:
@@ -205,6 +212,10 @@ class OpenAICompatibleProvider(_OpenAIChatProvider):
 
 class DatabricksEndpointProvider(_OpenAIChatProvider):
     name = "databricks"
+    # Databricks supports native tool calls but not the OpenAI parallel-tool
+    # extension. This leaves each individual model turn sequential without
+    # changing the retrieval agent's batched search_docs(queries=[...]) tool.
+    parallel_tool_calls = False
 
     def __init__(self, endpoint: str, *, profile: str | None = None, timeout: float = 90):
         self.model, self.profile, self.timeout = endpoint, profile, timeout

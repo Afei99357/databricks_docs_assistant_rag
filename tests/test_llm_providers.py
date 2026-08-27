@@ -154,6 +154,7 @@ def test_the_databricks_provider_shares_the_same_request_path():
     assert (call.name, call.arguments) == ("read_chunks", {"labels": ["S1", "S2"]})
     assert completions.captured["model"] == "chat-endpoint"
     assert completions.captured["tool_choice"] == "required"
+    assert "parallel_tool_calls" not in completions.captured
 
 
 def test_the_openai_normalizer_raises_when_no_tool_was_called():
