@@ -35,3 +35,15 @@
 - category: genie-apis
   url: https://docs.databricks.com/aws/en/dev-tools/cli/reference/genie-commands
   reason: Databricks CLI Genie commands
+- category: unity-catalog
+  url: https://docs.databricks.com/aws/en/admin/governed-tags/
+  reason: Governed tags overview (filed under Data governance, served from /admin/)
+- category: unity-catalog
+  url: https://docs.databricks.com/aws/en/admin/governed-tags/manage-governed-tags
+  reason: CREATE/ALTER/DROP GOVERNED TAG SQL syntax
+- category: unity-catalog
+  url: https://docs.databricks.com/aws/en/admin/governed-tags/manage-permissions
+  reason: Governed tag permissions
+- category: unity-catalog
+  url: https://docs.databricks.com/aws/en/admin/governed-tags/automate-tag-assignment
+  reason: Automating governed tag assignment
