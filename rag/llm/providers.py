@@ -100,7 +100,7 @@ class _OpenAIChatProvider:
         # tool_choice="required" is honoured by Databricks and ignored by
         # Ollama, which is why the agent's system prompt also states the
         # contract in words. Asking for it costs nothing where it works.
-        completion = self._create(messages, tools=tools, tool_choice="required")
+        completion = self._create(messages, tools=tools, tool_choice="required", parallel_tool_calls=True)
         return _tool_calls_from_openai(completion.choices[0].message)
 
     def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall:

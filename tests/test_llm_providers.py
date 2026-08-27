@@ -89,6 +89,7 @@ def test_the_provider_returns_a_native_tool_call():
     assert completions.captured["messages"] == messages
     assert completions.captured["tools"] == tools
     assert completions.captured["tool_choice"] == "required"
+    assert completions.captured["parallel_tool_calls"] is True
     assert completions.captured["model"] == "qwen"
 
 

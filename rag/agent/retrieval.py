@@ -197,7 +197,11 @@ SYSTEM_PROMPT = ("You are a documentation research agent. Investigate the datase
                  "and respond using the evidence returned. You never write the answer yourself: "
                  "end the investigation by calling the final tool with the labels of the evidence "
                  "that answers the question. Every retrieved excerpt has a short label such as S1; "
-                 "refer to evidence only by label.")
+                 "refer to evidence only by label. When the question has independent factual aspects, "
+                 "call search_docs once for every necessary aspect in the same assistant turn before "
+                 "waiting for results; do not issue synonymous rewrites one at a time. After receiving "
+                 "ranked results, call read_chunks once with every direct, high-ranked label needed for "
+                 "the answer. Use a later turn only when the next action depends on newly returned evidence.")
 
 FINAL_STEP_MESSAGE = ("This is your last step. Return a final action selecting the opened evidence "
                       "that answers the question, and list anything still unverified.")

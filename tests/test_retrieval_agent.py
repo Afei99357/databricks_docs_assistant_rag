@@ -93,6 +93,17 @@ def test_agent_declares_every_tool_it_dispatches():
     assert all(tool["type"] == "function" for tool in provider.declared_tools[0])
 
 
+def test_agent_instructs_the_model_to_batch_independent_searches_and_reads():
+    tools = Tools()
+    provider = Provider([ToolCall("search_docs", {"query": "broad question"}),
+                         ToolCall("read_chunks", {"labels": ["S1"]}),
+                         ToolCall("final", {"selected": ["S1"]})])
+    RetrievalAgent(tools, provider).retrieve("question")
+    prompt = provider.turns[0][0]["content"]
+    assert "same assistant turn" in prompt
+    assert "call read_chunks once" in prompt
+
+
 def test_agent_searches_reads_then_selects_opened_evidence():
     tools = Tools()
     agent = RetrievalAgent(tools, Provider([
