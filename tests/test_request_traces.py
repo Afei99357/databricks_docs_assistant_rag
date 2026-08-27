@@ -1,5 +1,6 @@
 from rag.agent.retrieval import RetrievalTrace, ToolStep
 from rag.llm.grounding import GroundingTrace
+from rag.llm.providers import LLMCallUsage
 from rag.models import Answer, Chunk, RetrievalResult
 from rag.store import DatabricksRequestTraceSink
 
@@ -29,6 +30,7 @@ def test_request_trace_records_evidence_and_grounding_diagnostics():
         results=[RetrievalResult(chunk, 0.9, "snapshot")],
         grounding_trace=GroundingTrace("Answer [S1].", ("S1",), None),
         answer=Answer("Answer [S1].", (), True, "ollama", "snapshot"), latency_ms=12,
+        llm_usage=[LLMCallUsage("openai-compatible", "muse", "tool_call", 100, 20, 120, 50)],
     )
     statement = store.statements[0]
     assert "INSERT INTO catalog.schema.rag_request_traces" in statement
@@ -37,5 +39,6 @@ def test_request_trace_records_evidence_and_grounding_diagnostics():
     assert "agent_satisfied" in statement
     assert "openai-compatible" in statement
     assert "muse" in statement
+    assert '"input_tokens": 100' in statement
     assert "INSERT INTO catalog.schema.rag_retrieval_traces" in store.statements[1]
     assert "Answer [S1]." in statement

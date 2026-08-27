@@ -22,7 +22,10 @@ runtime reuse its cached prefix instead of re-reading the transcript.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Protocol
 
 
@@ -33,6 +36,40 @@ class ToolCall:
     call_id: str | None = None
     message: dict | None = None
     """The assistant turn exactly as the runtime produced it, for appending."""
+
+
+@dataclass(frozen=True)
+class LLMCallUsage:
+    """Usage reported by one endpoint call; unknown token counts remain null."""
+    provider: str
+    model: str
+    operation: str
+    input_tokens: int | None
+    output_tokens: int | None
+    total_tokens: int | None
+    latency_ms: int
+
+
+_USAGE_CAPTURE: ContextVar[list[LLMCallUsage] | None] = ContextVar("llm_usage_capture", default=None)
+
+
+@contextmanager
+def capture_llm_usage():
+    """Collect provider-call usage for one request without shared mutable state."""
+    calls: list[LLMCallUsage] = []
+    token = _USAGE_CAPTURE.set(calls)
+    try:
+        yield calls
+    finally:
+        _USAGE_CAPTURE.reset(token)
+
+
+def _usage_value(usage, *names: str) -> int | None:
+    for name in names:
+        value = usage.get(name) if isinstance(usage, dict) else getattr(usage, name, None)
+        if isinstance(value, int):
+            return value
+    return None
 
 
 def _client_config_kwargs(profile: str | None, timeout: float) -> dict:
@@ -87,20 +124,35 @@ class _OpenAIChatProvider:
     def _client(self):
         raise NotImplementedError
 
-    def _create(self, messages: list[dict], **kwargs):
-        return self._client().chat.completions.create(
+    def _create(self, messages: list[dict], *, operation: str, **kwargs):
+        started = perf_counter()
+        completion = self._client().chat.completions.create(
             model=self.model, messages=messages, extra_body=self.extra_body, **kwargs,
         )
+        captured = _USAGE_CAPTURE.get()
+        if captured is not None:
+            usage = getattr(completion, "usage", None)
+            input_tokens = _usage_value(usage, "prompt_tokens", "input_tokens", "prompt_eval_count")
+            output_tokens = _usage_value(usage, "completion_tokens", "output_tokens", "eval_count")
+            total_tokens = _usage_value(usage, "total_tokens")
+            if total_tokens is None and input_tokens is not None and output_tokens is not None:
+                total_tokens = input_tokens + output_tokens
+            captured.append(LLMCallUsage(
+                self.name, self.model, operation, input_tokens, output_tokens, total_tokens,
+                round((perf_counter() - started) * 1000),
+            ))
+        return completion
 
     def complete(self, prompt: str) -> str:
-        completion = self._create([{"role": "user", "content": prompt}])
+        completion = self._create([{"role": "user", "content": prompt}], operation="completion")
         return (completion.choices[0].message.content or "").strip()
 
     def call_tools(self, messages: list[dict], tools: list[dict]) -> tuple[ToolCall, ...]:
         # tool_choice="required" is honoured by Databricks and ignored by
         # Ollama, which is why the agent's system prompt also states the
         # contract in words. Asking for it costs nothing where it works.
-        completion = self._create(messages, tools=tools, tool_choice="required", parallel_tool_calls=True)
+        completion = self._create(messages, operation="tool_call", tools=tools,
+                                  tool_choice="required", parallel_tool_calls=True)
         return _tool_calls_from_openai(completion.choices[0].message)
 
     def call_tool(self, messages: list[dict], tools: list[dict]) -> ToolCall:

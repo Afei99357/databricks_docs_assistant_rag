@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -105,7 +105,7 @@ class DatabricksRequestTraceSink:
 
     def record(self, *, turn_id: str | None, conversation_id: str | None, owner: str | None,
                question: str, resolved_query: str, retrieval_trace, results, grounding_trace,
-               answer, latency_ms: int) -> None:
+               answer, latency_ms: int, llm_usage=()) -> None:
         evidence = [
             {"chunk_id": item.chunk.chunk_id, "score": item.score, "title": item.chunk.source_title,
              "heading_path": item.chunk.heading_path, "source_url": item.chunk.source_url}
@@ -115,7 +115,7 @@ class DatabricksRequestTraceSink:
         selected = tuple(getattr(retrieval_trace, "selected_chunk_ids", ()) or ())
         steps = [
             {
-                "action": step.action, "status": step.status, "query": step.query,
+                "turn": step.turn, "action": step.action, "status": step.status, "query": step.query,
                 "chunk_ids": step.chunk_ids, "candidate_ids": step.candidate_ids,
                 "selected_chunk_ids": step.selected_chunk_ids,
                 "candidate_cards": step.candidate_cards, "detail": step.detail,
@@ -133,6 +133,9 @@ class DatabricksRequestTraceSink:
                 "stop_reason": getattr(retrieval_trace, "stop_reason", None),
                 "agent_provider": self.agent_provider,
                 "agent_model": self.agent_model,
+                "evidence_support": getattr(retrieval_trace, "evidence_support", ()),
+                "unverified_points": getattr(retrieval_trace, "unverified_points", ()),
+                "llm_calls": [asdict(call) if is_dataclass(call) else call for call in llm_usage],
             }),
             "raw_model_output": grounding_trace.raw_model_output,
             "parsed_citation_labels": "array(" + ",".join(sql_literal(value) for value in grounding_trace.parsed_citation_labels) + ")",

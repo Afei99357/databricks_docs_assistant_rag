@@ -7,6 +7,7 @@ from rag.llm.providers import (
     _client_config_kwargs,
     _tool_call_from_openai,
     _tool_calls_from_openai,
+    capture_llm_usage,
 )
 
 
@@ -41,18 +42,20 @@ class _Message:
 class _Completions:
     """Stands in for ``client.chat.completions``, recording the request."""
 
-    def __init__(self, message):
-        self.message, self.captured = message, {}
+    def __init__(self, message, usage=None):
+        self.message, self.usage, self.captured = message, usage, {}
 
     def create(self, **kwargs):
         self.captured = kwargs
-        return type("Completion", (), {"choices": [type("Choice", (), {"message": self.message})]})
+        return type("Completion", (), {
+            "choices": [type("Choice", (), {"message": self.message})], "usage": self.usage,
+        })
 
 
-def _provider(cls, message, *args, **kwargs):
+def _provider(cls, message, *args, usage=None, **kwargs):
     """Build a provider whose client is a recording stub."""
     provider = cls(*args, **kwargs)
-    completions = _Completions(message)
+    completions = _Completions(message, usage)
     provider._client = lambda: type("Client", (), {"chat": type("Chat", (), {"completions": completions})})
     return provider, completions
 
@@ -119,6 +122,27 @@ def test_complete_sends_the_prompt_as_a_single_user_turn():
     assert provider.complete("Answer from the sources.") == "grounded answer"
     assert completions.captured["messages"] == [{"role": "user", "content": "Answer from the sources."}]
     assert "tools" not in completions.captured
+
+
+def test_provider_captures_reported_usage_per_call():
+    usage = type("Usage", (), {"prompt_tokens": 21, "completion_tokens": 8, "total_tokens": 29})()
+    provider, _ = _provider(OllamaProvider, _Message(content="answer"), "http://localhost:11434", "qwen", usage=usage)
+
+    with capture_llm_usage() as calls:
+        provider.complete("Answer from sources.")
+
+    assert len(calls) == 1
+    assert calls[0].operation == "completion"
+    assert (calls[0].input_tokens, calls[0].output_tokens, calls[0].total_tokens) == (21, 8, 29)
+
+
+def test_provider_records_unknown_usage_without_estimating_tokens():
+    provider, _ = _provider(OllamaProvider, _Message(content="answer"), "http://localhost:11434", "qwen")
+
+    with capture_llm_usage() as calls:
+        provider.complete("Answer from sources.")
+
+    assert (calls[0].input_tokens, calls[0].output_tokens, calls[0].total_tokens) == (None, None, None)
 
 
 def test_the_databricks_provider_shares_the_same_request_path():
