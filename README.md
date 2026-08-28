@@ -136,7 +136,10 @@ just repair-chunks
 This clears the recorded content hash so every document re-chunks, then rebuilds the local
 snapshot even though the corpus fingerprint is unchanged. It costs a full re-embed, so it is
 a deliberate repair rather than part of a routine refresh. The Databricks side takes the same
-repair through its Workflow: run `refresh_app_index.py` with `--repair-chunks`.
+repair through its Workflow: run it with the `repair_chunks` job parameter set to `true`
+(the Workflow's "Run with different parameters" option, or `databricks jobs run-now <id>
+--json '{"job_parameters": {"repair_chunks": "true"}}'`). It defaults to `false`, so a normal
+scheduled or manual run is unaffected.
 
 Both apps read chunks from the same Delta tables, so one repair fixes the stored text for both,
 but each snapshot must then be rebuilt with its own embedding model.
