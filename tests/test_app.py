@@ -18,14 +18,14 @@ class Identity:
 
 class History:
     def __init__(self): self.data = {}; self.resolved = []
-    def create(self, owner, title): self.data["c1"] = []; return "c1"
-    def list(self, owner): return [("c1", "first question", "today")]
+    def create_conversation(self, owner, title): self.data["c1"] = []; return "c1"
+    def list_conversations(self, owner): return [("c1", "first question", "today")]
     def turns_for(self, owner, conversation_id): return self.data.get(conversation_id, [])
     def append_turn(self, owner, conversation_id, **kwargs):
         self.resolved.append(kwargs["resolved_query"])
         self.data.setdefault(conversation_id, []).append(("t", len(self.data.get(conversation_id, [])) + 1, kwargs["question"], kwargs["answer"].text, kwargs["answer"].supported, kwargs["answer"].snapshot_id, kwargs["citation_ids"], "today"))
 
-    def delete(self, owner, conversation_id):
+    def delete_conversation(self, owner, conversation_id):
         if conversation_id not in self.data: return False
         del self.data[conversation_id]
         return True

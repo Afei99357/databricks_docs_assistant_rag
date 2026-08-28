@@ -10,7 +10,6 @@ from rag.agent.retrieval import RetrievalAgent
 from rag.config import Settings
 from rag.evaluate import evaluate as run_evaluation
 from rag.evaluate import format_header, format_row, format_summary, load_cases
-from rag.history import ConversationRepository
 from rag.identity import LocalTestIdentityProvider
 from rag.index.embeddings import OllamaEmbeddingProvider
 from rag.index.faiss_store import read_active_fingerprint
@@ -99,21 +98,20 @@ def serve() -> None:
     retriever, provider, agent_provider = _local_stack(settings)
     from rag.app.web import create_app
 
-    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
+    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace)
     feedback = DatabricksFeedbackSink(
         store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model
     )
     agent = RetrievalAgent(
         retriever, agent_provider, candidates_per_search=settings.agent_candidates_per_search
     )
-    history = ConversationRepository(store, settings.namespace)
     identity = LocalTestIdentityProvider()
     create_app(
         retrieve=agent.retrieve,
         provider=provider,
         threshold=settings.relevance_threshold,
         feedback_sink=feedback,
-        history=history,
+        history=store,
         identity=identity,
         trace_getter=lambda: agent.last_trace,
         progress_retrieve=agent.retrieve,

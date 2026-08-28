@@ -11,7 +11,6 @@ import os
 from rag.agent.retrieval import RetrievalAgent
 from rag.app.web import create_app
 from rag.config import Settings
-from rag.history import ConversationRepository
 from rag.identity import DatabricksAppIdentityProvider
 from rag.index.embeddings import DatabricksEmbeddingProvider
 from rag.index.runtime import VolumeSnapshotRetriever, app_snapshot_root
@@ -34,7 +33,7 @@ def create_databricks_app():
     if not settings.chat_model:
         raise RuntimeError("the Databricks App requires RAG_CHAT_MODEL from its serving-endpoint resource")
     provider = DatabricksEndpointProvider(settings.chat_model)
-    store = DatabricksStore(settings.warehouse_id)
+    store = DatabricksStore(settings.warehouse_id, namespace=settings.namespace)
     feedback = DatabricksFeedbackSink(
         store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model,
     )
@@ -44,7 +43,7 @@ def create_databricks_app():
         provider=provider,
         threshold=settings.relevance_threshold,
         feedback_sink=feedback,
-        history=ConversationRepository(store, settings.namespace),
+        history=store,
         identity=DatabricksAppIdentityProvider(),
         trace_getter=lambda: agent.last_trace,
         progress_retrieve=agent.retrieve,

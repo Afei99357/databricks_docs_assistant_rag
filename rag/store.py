@@ -12,6 +12,7 @@ from uuid import uuid4
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementParameterListItem
 
+from rag.conversation import history_title
 from rag.models import Chunk, Document
 
 
@@ -45,9 +46,10 @@ def to_statement_parameters(values: dict[str, object]) -> list[StatementParamete
 
 
 class DatabricksStore:
-    def __init__(self, warehouse_id: str, profile: str | None = None):
+    def __init__(self, warehouse_id: str, profile: str | None = None, namespace: str | None = None):
         self.workspace = WorkspaceClient(profile=profile) if profile else WorkspaceClient()
         self.warehouse_id = warehouse_id
+        self.namespace = namespace
 
     def execute(
         self,
@@ -113,6 +115,97 @@ class DatabricksStore:
         if missing:
             definition = ", ".join(f"{name} {data_type}" for name, data_type in missing.items())
             self.execute(f"ALTER TABLE {table} ADD COLUMNS ({definition})")
+
+    def create_conversation(self, owner: str, title: str) -> str:
+        conversation_id = uuid4().hex
+        self.execute(
+            f"INSERT INTO {self.namespace}.rag_conversations "
+            "(conversation_id,owner_user_id,title,status,created_at,updated_at) VALUES "
+            "(:conversation_id,:owner,:title,'active',current_timestamp(),current_timestamp())",
+            parameters={
+                "conversation_id": conversation_id,
+                "owner": owner,
+                "title": history_title(title),
+            },
+        )
+        return conversation_id
+
+    def list_conversations(self, owner: str):
+        return self.execute(
+            f"SELECT conversation_id,title,updated_at FROM {self.namespace}.rag_conversations "
+            "WHERE owner_user_id=:owner AND status='active' ORDER BY updated_at DESC",
+            parameters={"owner": owner},
+        ).rows
+
+    def turns_for(self, owner: str, conversation_id: str):
+        return self.execute(
+            "SELECT t.turn_id,t.turn_number,t.user_question,t.answer_text,t.supported,"
+            "t.snapshot_id,t.citation_chunk_ids,t.created_at "
+            f"FROM {self.namespace}.rag_conversation_turns t "
+            f"JOIN {self.namespace}.rag_conversations c ON t.conversation_id=c.conversation_id "
+            "WHERE c.owner_user_id=:owner AND c.conversation_id=:conversation_id "
+            "AND c.status='active' ORDER BY t.turn_number",
+            parameters={"owner": owner, "conversation_id": conversation_id},
+        ).rows
+
+    def _owns_active_conversation(self, owner: str, conversation_id: str) -> bool:
+        rows = self.execute(
+            f"SELECT count(*) FROM {self.namespace}.rag_conversations "
+            "WHERE conversation_id=:conversation_id AND owner_user_id=:owner AND status='active'",
+            parameters={"conversation_id": conversation_id, "owner": owner},
+        ).rows
+        return int(rows[0][0]) == 1
+
+    def delete_conversation(self, owner: str, conversation_id: str) -> bool:
+        """Hide one owned conversation without deleting its audit records."""
+        if not self._owns_active_conversation(owner, conversation_id):
+            return False
+        self.execute(
+            f"UPDATE {self.namespace}.rag_conversations "
+            "SET status='deleted',updated_at=current_timestamp() "
+            "WHERE conversation_id=:conversation_id AND owner_user_id=:owner",
+            parameters={"conversation_id": conversation_id, "owner": owner},
+        )
+        return True
+
+    def append_turn(self, owner: str, conversation_id: str, *, question: str,
+                    resolved_query: str, answer, citation_ids: list[str],
+                    latency_ms: int) -> str:
+        if not self._owns_active_conversation(owner, conversation_id):
+            raise PermissionError("conversation not found")
+        number = int(self.execute(
+            f"SELECT coalesce(max(turn_number),0)+1 FROM {self.namespace}.rag_conversation_turns "
+            "WHERE conversation_id=:conversation_id",
+            parameters={"conversation_id": conversation_id},
+        ).rows[0][0])
+        turn_id = uuid4().hex
+        self.execute(
+            f"INSERT INTO {self.namespace}.rag_conversation_turns "
+            "(turn_id,conversation_id,turn_number,user_question,resolved_query,answer_text,"
+            "supported,provider,model,snapshot_id,citation_chunk_ids,created_at,latency_ms) "
+            "VALUES (:turn_id,:conversation_id,:number,:question,:resolved_query,:answer_text,"
+            ":supported,:provider,NULL,:snapshot_id,"
+            "from_json(:citation_ids,'array<string>'),current_timestamp(),:latency_ms)",
+            parameters={
+                "turn_id": turn_id,
+                "conversation_id": conversation_id,
+                "number": number,
+                "question": question,
+                "resolved_query": resolved_query,
+                "answer_text": answer.text,
+                "supported": answer.supported,
+                "provider": answer.provider,
+                "snapshot_id": answer.snapshot_id,
+                "citation_ids": json.dumps(list(citation_ids)),
+                "latency_ms": latency_ms,
+            },
+        )
+        self.execute(
+            f"UPDATE {self.namespace}.rag_conversations SET updated_at=current_timestamp() "
+            "WHERE conversation_id=:conversation_id",
+            parameters={"conversation_id": conversation_id},
+        )
+        return turn_id
 
     def upload(self, local_path: str | Path, volume_path: str, *, overwrite: bool = False) -> None:
         with Path(local_path).open("rb") as handle:

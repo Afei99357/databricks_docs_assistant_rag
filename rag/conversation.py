@@ -3,6 +3,16 @@ from __future__ import annotations
 
 from rag.llm.providers import AnswerProvider
 
+
+def history_title(question: str) -> str:
+    """Keep sidebar labels useful without turning them into horizontal documents."""
+    normalized = " ".join(question.split())
+    if len(normalized) <= 88:
+        return normalized or "New conversation"
+    shortened = normalized[:85].rsplit(" ", 1)[0] or normalized[:85]
+    return shortened + "…"
+
+
 REWRITE_TOOL = [{
     "type": "function",
     "function": {
