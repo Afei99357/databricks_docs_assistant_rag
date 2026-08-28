@@ -36,8 +36,8 @@ class Diagnostics:
         self.feedback = []
         self.traces = []
 
-    def record_feedback(self, **kwargs):
-        self.feedback.append(kwargs)
+    def record_feedback(self, payload):
+        self.feedback.append(payload)
 
     def record_request_trace(self, **kwargs):
         self.traces.append(kwargs)

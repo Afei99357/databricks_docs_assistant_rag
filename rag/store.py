@@ -52,10 +52,28 @@ def to_statement_parameters(values: dict[str, object]) -> list[StatementParamete
 
 
 class DatabricksStore:
-    def __init__(self, warehouse_id: str, profile: str | None = None, namespace: str | None = None):
+    def __init__(
+        self,
+        warehouse_id: str,
+        profile: str | None = None,
+        namespace: str | None = None,
+        *,
+        provider: str | None = None,
+        model: str | None = None,
+        agent_provider: str | None = None,
+        agent_model: str | None = None,
+    ):
         self.workspace = WorkspaceClient(profile=profile) if profile else WorkspaceClient()
         self.warehouse_id = warehouse_id
         self.namespace = namespace
+        # Diagnostics-only identity: which chat/agent model produced a recorded
+        # answer. Not used by any corpus/conversation method. agent_provider and
+        # agent_model default to the answer provider/model because most callers
+        # run one model for both retrieval and generation.
+        self.provider = provider
+        self.model = model
+        self.agent_provider = agent_provider or provider
+        self.agent_model = agent_model or model
 
     def execute(
         self,
@@ -108,10 +126,6 @@ class DatabricksStore:
         )
         self._add_missing_columns(
             f"{catalog}.{schema}.rag_index_snapshots", {"corpus_fingerprint": "STRING"}
-        )
-        self._add_missing_columns(
-            f"{catalog}.{schema}.rag_feedback",
-            {"turn_id": "STRING", "owner_user_id": "STRING"},
         )
 
     def _add_missing_columns(self, table: str, columns: dict[str, str]) -> None:
@@ -489,7 +503,7 @@ class DatabricksStore:
             "from_json(:retrieval_queries,'array<string>'),:retrieval_status,"
             ":selected_evidence_json,:raw_model_output,"
             "from_json(:parsed_citation_labels,'array<string>'),:fallback_reason,"
-            ":final_answer_text,:supported,:provider,NULL,:snapshot_id,:latency_ms,"
+            ":final_answer_text,:supported,:provider,:model,:snapshot_id,:latency_ms,"
             "current_timestamp())",
             parameters={
                 "trace_id": trace_id,
@@ -506,6 +520,8 @@ class DatabricksStore:
                         "evidence": evidence,
                         "tool_steps": steps,
                         "stop_reason": getattr(retrieval_trace, "stop_reason", None),
+                        "agent_provider": self.agent_provider,
+                        "agent_model": self.agent_model,
                         "evidence_support": getattr(retrieval_trace, "evidence_support", ()),
                         "unverified_points": getattr(retrieval_trace, "unverified_points", ()),
                         "llm_calls": [
@@ -520,7 +536,8 @@ class DatabricksStore:
                 "fallback_reason": getattr(grounding_trace, "fallback_reason", None),
                 "final_answer_text": answer.text,
                 "supported": answer.supported,
-                "provider": answer.provider,
+                "provider": self.provider,
+                "model": self.model,
                 "snapshot_id": answer.snapshot_id,
                 "latency_ms": latency_ms,
             },
@@ -547,44 +564,24 @@ class DatabricksStore:
                     },
                 )
 
-    def record_feedback(
-        self,
-        *,
-        turn_id: str | None,
-        owner: str | None,
-        rating: str,
-        comment: str | None,
-        retrieved_chunk_ids,
-        latency_ms: int,
-    ) -> None:
-        """Stores only request/retrieval diagnostics and user feedback, never answer text.
-
-        `question`/`provider`/`snapshot_id` stay NOT NULL in the existing schema even
-        though this call no longer carries that context -- it identifies the turn by
-        `turn_id` instead, which duplicated that context in rag_conversation_turns
-        already -- so they get the same placeholder the old sink used for a missing
-        snapshot_id rather than smuggling turn_id/owner into unrelated columns.
-        `turn_id`/`owner_user_id` are columns `apply_schema` adds after the fact, the
-        same way it already does for rag_documents and rag_index_snapshots.
-        """
+    def record_feedback(self, payload: dict) -> None:
+        """Stores only request/retrieval diagnostics and user feedback, never answer text."""
         self.execute(
             f"INSERT INTO {self.namespace}.rag_feedback "
             "(feedback_id,question,submitted_at,provider,model,snapshot_id,"
-            "retrieved_chunk_ids,latency_ms,rating,comment,turn_id,owner_user_id) VALUES "
-            "(:feedback_id,:question,current_timestamp(),:provider,NULL,:snapshot_id,"
-            "from_json(:retrieved_chunk_ids,'array<string>'),:latency_ms,:rating,:comment,"
-            ":turn_id,:owner_user_id)",
+            "retrieved_chunk_ids,latency_ms,rating,comment) VALUES "
+            "(:feedback_id,:question,current_timestamp(),:provider,:model,:snapshot_id,"
+            "from_json(:retrieved_chunk_ids,'array<string>'),:latency_ms,:rating,:comment)",
             parameters={
                 "feedback_id": uuid4().hex,
-                "question": "unknown",
-                "provider": "unknown",
-                "snapshot_id": "unknown",
-                "retrieved_chunk_ids": json.dumps(list(retrieved_chunk_ids)),
-                "latency_ms": latency_ms,
-                "rating": rating,
-                "comment": comment or None,
-                "turn_id": turn_id,
-                "owner_user_id": owner,
+                "question": payload.get("question", ""),
+                "provider": self.provider,
+                "model": self.model,
+                "snapshot_id": payload.get("snapshot_id", "unknown"),
+                "retrieved_chunk_ids": json.dumps(list(payload.get("retrieved_chunk_ids", []))),
+                "latency_ms": payload.get("latency_ms"),
+                "rating": payload["rating"],
+                "comment": payload.get("comment") or None,
             },
         )
 

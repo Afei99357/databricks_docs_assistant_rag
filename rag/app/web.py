@@ -181,13 +181,7 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         if payload.get("rating") not in {"up", "down"}:
             return jsonify({"error": "rating must be up or down"}), 400
         if diagnostics:
-            owner = identity.current_user_id(request) if identity else None
-            diagnostics.record_feedback(
-                turn_id=payload.get("turn_id"), owner=owner, rating=payload["rating"],
-                comment=payload.get("comment") or None,
-                retrieved_chunk_ids=payload.get("retrieved_chunk_ids", []),
-                latency_ms=payload.get("latency_ms"),
-            )
+            diagnostics.record_feedback(payload)
         return ("", 204)
 
     return app

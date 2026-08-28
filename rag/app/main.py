@@ -33,7 +33,11 @@ def create_databricks_app():
     if not settings.chat_model:
         raise RuntimeError("the Databricks App requires RAG_CHAT_MODEL from its serving-endpoint resource")
     provider = DatabricksEndpointProvider(settings.chat_model)
-    store = DatabricksStore(settings.warehouse_id, namespace=settings.namespace)
+    store = DatabricksStore(
+        settings.warehouse_id, namespace=settings.namespace,
+        provider=provider.name, model=provider.model,
+        agent_provider=provider.name, agent_model=provider.model,
+    )
     agent = RetrievalAgent(retriever, provider, candidates_per_search=settings.agent_candidates_per_search)
     return create_app(
         retrieve=agent.retrieve,

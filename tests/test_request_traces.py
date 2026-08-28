@@ -6,8 +6,12 @@ from rag.store import DatabricksStore
 
 
 class Recorder:
-    def __init__(self):
+    def __init__(self, *, provider="ollama", model="qwen", agent_provider=None, agent_model=None):
         self.calls = []
+        self.provider = provider
+        self.model = model
+        self.agent_provider = agent_provider or provider
+        self.agent_model = agent_model or model
 
     def execute(self, statement, timeout_seconds=300, *, parameters=None):
         self.calls.append((statement, parameters or {}))
@@ -58,6 +62,32 @@ def test_request_trace_binds_retrieval_queries_and_citation_labels_as_json():
     assert "from_json(:parsed_citation_labels" in statement
     assert parameters["retrieval_queries"] == '["What\'s it?"]'
     assert parameters["parsed_citation_labels"] == '["S1"]'
+
+
+def test_request_trace_binds_the_serving_model_and_agent_identity_not_null():
+    # Regression: a request trace with no model recorded cannot be attributed to
+    # the serving model that produced it -- this is exactly what distinguished a
+    # Muse-served answer from a databricks-claude-sonnet-4-5 one while diagnosing
+    # a 2026-08-27 citation bug.
+    store = Recorder(
+        provider="databricks-claude-sonnet-4-5", model="claude-sonnet-4-5",
+        agent_provider="openai-compatible", agent_model="muse",
+    )
+    store.namespace = "cat.sch"
+    DatabricksStore.record_request_trace(
+        store, turn_id=None, conversation_id=None, owner=None,
+        question="What is it?", resolved_query="What is it?",
+        retrieval_trace=None, results=[],
+        grounding_trace=GroundingTrace(None, (), None),
+        answer=Answer("Answer.", (), True, "databricks-claude-sonnet-4-5", "snapshot"), latency_ms=12,
+    )
+    _, parameters = store.calls[0]
+    assert parameters["provider"] == "databricks-claude-sonnet-4-5"
+    assert parameters["model"] == "claude-sonnet-4-5"
+    assert parameters["model"] is not None
+    evidence = parameters["selected_evidence_json"]
+    assert '"agent_provider": "openai-compatible"' in evidence
+    assert '"agent_model": "muse"' in evidence
 
 
 def test_request_trace_writes_retrieval_rows_with_json_bound_id_arrays_when_turn_id_present():
@@ -113,10 +143,11 @@ def test_request_trace_skips_retrieval_rows_when_turn_id_absent():
 def test_feedback_binds_comment_and_chunk_ids_as_parameters_not_inlined_sql():
     store = Recorder()
     store.namespace = "cat.sch"
-    DatabricksStore.record_feedback(
-        store, turn_id="turn-1", owner="e@x.com", rating="up",
-        comment="it's great", retrieved_chunk_ids=["chunk-1", "chunk-2"], latency_ms=42,
-    )
+    DatabricksStore.record_feedback(store, {
+        "question": "What is it?", "snapshot_id": "s",
+        "retrieved_chunk_ids": ["chunk-1", "chunk-2"], "latency_ms": 42,
+        "rating": "up", "comment": "it's great",
+    })
     statement, parameters = store.calls[0]
     assert "it's great" not in statement
     assert "chunk-1" not in statement
@@ -124,7 +155,32 @@ def test_feedback_binds_comment_and_chunk_ids_as_parameters_not_inlined_sql():
     assert "from_json(:retrieved_chunk_ids" in statement
     assert parameters["comment"] == "it's great"
     assert parameters["retrieved_chunk_ids"] == '["chunk-1", "chunk-2"]'
-    assert parameters["turn_id"] == "turn-1"
-    assert parameters["owner_user_id"] == "e@x.com"
     assert parameters["rating"] == "up"
     assert parameters["latency_ms"] == 42
+
+
+def test_feedback_binds_the_question_text_and_serving_model():
+    # Regression: a feedback row with no question can't be traced back to what
+    # was asked, and the old sink always recorded question/provider/model/
+    # snapshot_id alongside the rating.
+    store = Recorder(provider="databricks-claude-sonnet-4-5", model="claude-sonnet-4-5")
+    store.namespace = "cat.sch"
+    DatabricksStore.record_feedback(store, {
+        "question": "what's a governed tag?", "snapshot_id": "snap-1",
+        "retrieved_chunk_ids": ["chunk-1"], "latency_ms": 42, "rating": "up",
+    })
+    statement, parameters = store.calls[0]
+    assert "what's a governed tag?" not in statement
+    assert parameters["question"] == "what's a governed tag?"
+    assert parameters["provider"] == "databricks-claude-sonnet-4-5"
+    assert parameters["model"] == "claude-sonnet-4-5"
+    assert parameters["snapshot_id"] == "snap-1"
+
+
+def test_feedback_defaults_missing_question_and_snapshot_id():
+    store = Recorder()
+    store.namespace = "cat.sch"
+    DatabricksStore.record_feedback(store, {"rating": "down"})
+    _, parameters = store.calls[0]
+    assert parameters["question"] == ""
+    assert parameters["snapshot_id"] == "unknown"

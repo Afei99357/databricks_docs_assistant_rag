@@ -97,7 +97,11 @@ def serve() -> None:
     retriever, provider, agent_provider = _local_stack(settings)
     from rag.app.web import create_app
 
-    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace)
+    store = DatabricksStore(
+        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace,
+        provider=provider.name, model=provider.model,
+        agent_provider=agent_provider.name, agent_model=agent_provider.model,
+    )
     agent = RetrievalAgent(
         retriever, agent_provider, candidates_per_search=settings.agent_candidates_per_search
     )
