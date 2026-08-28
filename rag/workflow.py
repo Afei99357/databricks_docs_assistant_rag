@@ -288,7 +288,9 @@ def publish_snapshot(
                     for chunk, vector in zip(missing, vectors)
                 ]
             )
+        print("loading persisted embedding vectors...", flush=True)
         vectors = [item.vector for item in store.embeddings_for(chunks, spec)]
+        print("building FAISS snapshot...", flush=True)
         published = build_from_embeddings_and_activate(
             chunks,
             vectors,
@@ -298,10 +300,12 @@ def publish_snapshot(
             embedding_revision=embedding_revision,
             chunking_revision=chunking_revision,
         )
+        print("uploading snapshot artifacts...", flush=True)
         published_location = publisher.publish(
             published.local_directory, published.metadata.snapshot_id
         )
         metadata = replace(published.metadata, artifact_path=f"{published_location}/index.faiss")
+        print("activating snapshot...", flush=True)
         store.activate_snapshot(metadata)
         if materialize:
             store.mark_documents_materialized()

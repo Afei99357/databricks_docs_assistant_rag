@@ -321,7 +321,10 @@ class DatabricksStore:
         return [chunk for chunk in chunks if chunk.chunk_id not in present]
 
     def save_embeddings(self, embeddings: list[StoredEmbedding]) -> None:
-        for item in embeddings:
+        total = len(embeddings)
+        if total:
+            print(f"saving {total} embedding vectors to Delta...", flush=True)
+        for number, item in enumerate(embeddings, start=1):
             self.execute(
                 f"DELETE FROM {self.namespace}.rag_chunk_embeddings WHERE chunk_id=:chunk_id "
                 "AND embedding_model=:model AND embedding_revision=:revision",
@@ -344,6 +347,8 @@ class DatabricksStore:
                     "vector": json.dumps(item.vector),
                 },
             )
+            if number % 100 == 0 or number == total:
+                print(f"saved {number}/{total} embedding vectors to Delta...", flush=True)
 
     def embeddings_for(self, chunks: list[Chunk], spec: EmbeddingSpec) -> list[StoredEmbedding]:
         if not chunks:
