@@ -22,6 +22,13 @@ class SqlResult:
     rows: list[list]
 
 
+# Each chunk row binds 11 parameters. The warehouse accepted 512 parameters in a
+# single statement when measured directly; the largest document in the corpus has
+# 109 chunks (1,199 parameters), which exceeds that. 40 rows/insert (~440 params)
+# stays under the ceiling while keeping the average 12.6-chunk document to one statement.
+CHUNK_INSERT_BATCH = 40
+
+
 def to_statement_parameters(values: dict[str, object]) -> list[StatementParameterListItem]:
     """Bind values as typed parameters instead of escaping them into the statement.
 
@@ -300,6 +307,8 @@ class DatabricksStore:
         return result
 
     def upsert_document(self, table: str, document: Document, *, action: str | None = None) -> None:
+        # `values` supplies both the bound parameters and the MERGE source row/update
+        # list below, so the three cannot drift out of sync with each other.
         values = {
             "doc_id": document.doc_id,
             "requested_url": document.requested_url,
@@ -310,25 +319,26 @@ class DatabricksStore:
             "source_content_hash": document.content_hash,
             "document_version": document.document_version,
             "status": document.status,
-            "source_origins": "array("
-            + ",".join(sql_literal(item) for item in document.source_origins)
-            + ")",
+            "source_origins": json.dumps(list(document.source_origins)),
             "indexed_content_hash": document.indexed_content_hash,
             "indexed_source_last_updated": document.indexed_source_last_updated,
             "consecutive_404_count": document.consecutive_404_count,
             "error_message": document.error_message,
             "last_run_action": action,
+        }
+        # Columns whose source-row expression is not a plain bound parameter.
+        raw = {
+            "source_origins": "from_json(:source_origins,'array<string>')",
             "retrieved_at": "current_timestamp()",
         }
-        raw = {"retrieved_at", "source_origins"}
-        source = ", ".join(
-            (value if name in raw else sql_literal(value)) + f" AS {name}"
-            for name, value in values.items()
-        )
-        updates = ", ".join(f"target.{name} = source.{name}" for name in values if name != "doc_id")
+        columns = [*values, "retrieved_at"]
+        source = ", ".join((raw.get(name) or f":{name}") + f" AS {name}" for name in columns)
+        updates = ", ".join(f"target.{name} = source.{name}" for name in columns if name != "doc_id")
         self.execute(
             f"MERGE INTO {table} target USING (SELECT {source}) source ON target.doc_id = source.doc_id "
-            f"WHEN MATCHED THEN UPDATE SET {updates} WHEN NOT MATCHED THEN INSERT ({', '.join(values)}) VALUES ({', '.join('source.' + name for name in values)})"
+            f"WHEN MATCHED THEN UPDATE SET {updates} WHEN NOT MATCHED THEN "
+            f"INSERT ({', '.join(columns)}) VALUES ({', '.join('source.' + name for name in columns)})",
+            parameters=values,
         )
 
     def replace_document_chunks(
@@ -343,43 +353,50 @@ class DatabricksStore:
 
         The manifest switches the active version only after this method returns,
         so an insert failure cannot make a previously usable chunk set vanish.
+
+        Inserts are batched (CHUNK_INSERT_BATCH rows/statement) because a single
+        multi-row INSERT binds 11 parameters per row -- the largest document in
+        the corpus would need 1,199 parameters in one statement, above the
+        measured 512-parameter ceiling.
         """
         self.execute(
-            f"DELETE FROM {table} WHERE doc_id = {sql_literal(document.doc_id)} AND document_version = {sql_literal(document.document_version)}"
+            f"DELETE FROM {table} WHERE doc_id=:doc_id AND document_version=:version",
+            parameters={"doc_id": document.doc_id, "version": document.document_version},
         )
-        if not chunks:
-            return
-        rows = []
-        for chunk in chunks:
-            path = "array(" + ", ".join(sql_literal(item) for item in chunk.heading_path) + ")"
-            rows.append(
-                "("
-                + ", ".join(
-                    (
-                        sql_literal(chunk.chunk_id),
-                        sql_literal(chunk.doc_id),
-                        sql_literal(chunk.document_version),
-                        str(chunk.position),
-                        sql_literal(chunk.text),
-                        path,
-                        sql_literal(chunk.source_url),
-                        sql_literal(chunk.source_title),
-                        sql_literal(embedding_model),
-                        sql_literal(embedding_dimension),
-                        "current_timestamp()",
-                    )
+        for start in range(0, len(chunks), CHUNK_INSERT_BATCH):
+            batch = chunks[start : start + CHUNK_INSERT_BATCH]
+            rows, parameters = [], {}
+            for offset, chunk in enumerate(batch):
+                n = f"r{offset}"
+                rows.append(
+                    f"(:{n}_id,:{n}_doc,:{n}_ver,:{n}_pos,:{n}_text,"
+                    f"from_json(:{n}_path,'array<string>'),:{n}_url,:{n}_title,"
+                    f":{n}_model,:{n}_dim,current_timestamp())"
                 )
-                + ")"
+                parameters |= {
+                    f"{n}_id": chunk.chunk_id,
+                    f"{n}_doc": chunk.doc_id,
+                    f"{n}_ver": chunk.document_version,
+                    f"{n}_pos": chunk.position,
+                    f"{n}_text": chunk.text,
+                    f"{n}_path": json.dumps(list(chunk.heading_path)),
+                    f"{n}_url": chunk.source_url,
+                    f"{n}_title": chunk.source_title,
+                    f"{n}_model": embedding_model,
+                    f"{n}_dim": embedding_dimension,
+                }
+            self.execute(
+                f"INSERT INTO {table} (chunk_id, doc_id, document_version, position, chunk_text, "
+                "heading_path, source_url, source_title, embedding_model, embedding_dimension, "
+                "embedding_created_at) VALUES " + ", ".join(rows),
+                parameters=parameters,
             )
-        self.execute(
-            f"INSERT INTO {table} (chunk_id, doc_id, document_version, position, chunk_text, heading_path, source_url, source_title, embedding_model, embedding_dimension, embedding_created_at) VALUES {', '.join(rows)}"
-        )
 
     def prune_document_chunks(self, table: str, document: Document) -> None:
         """Remove superseded versions only after the manifest points at the new one."""
         self.execute(
-            f"DELETE FROM {table} WHERE doc_id = {sql_literal(document.doc_id)} "
-            f"AND document_version <> {sql_literal(document.document_version)}"
+            f"DELETE FROM {table} WHERE doc_id=:doc_id AND document_version<>:version",
+            parameters={"doc_id": document.doc_id, "version": document.document_version},
         )
 
     def clear_indexed_content_hashes(self, table: str) -> int:
