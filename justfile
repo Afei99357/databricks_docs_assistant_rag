@@ -38,6 +38,11 @@ lint:
 # Both, as CI would.
 check: lint test
 
+# Run the storage contract suite against the real warehouse. Writes and soft-deletes
+# conversation rows in the shared Delta tables; skipped by `just check`.
+test-storage-databricks:
+    RAG_STORAGE_CONTRACT=1 uv run pytest tests/storage/test_contract.py
+
 # --- local index and server --------------------------------------------
 
 # Fetch and list the official source URLs without ingesting them.

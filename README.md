@@ -111,6 +111,17 @@ just test tests/test_sources.py
 `just discover` fetches and lists the official source URLs without ingesting them, which is the
 cheap way to see what the configured roots and supplements currently resolve to.
 
+`just check` skips `tests/storage/test_contract.py`, the behavioural contract suite for the
+storage protocols (conversation round-tripping, owner isolation, delete-twice semantics). It
+is opt-in because it writes to the real warehouse configured in `.env` — it creates and
+soft-deletes conversation rows in the shared Delta tables under a clearly-marked owner id
+(`storage-contract-test@example.invalid`), and `delete_conversation` is a soft delete, so
+those rows persist. Run it deliberately:
+
+```bash
+just test-storage-databricks
+```
+
 ### Repairing stored chunks
 
 A refresh rewrites a document's chunks only when the fetched page differs from what was last
