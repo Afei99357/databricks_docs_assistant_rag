@@ -35,6 +35,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "Accepts true/false (the job's repair_chunks parameter substitutes a string here); "
         "omitting the flag entirely also defaults to false.",
     )
+    parser.add_argument(
+        "--resume-snapshot",
+        type=_parse_bool,
+        default=False,
+        help="skip source refresh and publish from the persisted current chunks",
+    )
     return parser.parse_args(argv)
 
 
@@ -55,6 +61,8 @@ def main() -> None:
         schema=settings.schema,
         artifact_volume=settings.artifact_volume,
     )
+    if args.repair_chunks and args.resume_snapshot:
+        raise ValueError("--repair-chunks and --resume-snapshot cannot be combined")
     if args.repair_chunks:
         affected = store.clear_indexed_content_hashes()
         print(
@@ -62,12 +70,14 @@ def main() -> None:
             "every one will re-chunk.",
             flush=True,
         )
-    print("refreshing configured documentation sources...", flush=True)
-    refreshed = refresh_sources(store, chunking_revision=os.getenv("RAG_CHUNKING_REVISION", "v1"))
-    if (
-        not args.repair_chunks
-        and store.active_snapshot_fingerprint() == refreshed.corpus_fingerprint
-    ):
+    if args.resume_snapshot:
+        print("using persisted chunks; skipping source refresh...", flush=True)
+        corpus_fingerprint = store.active_snapshot_fingerprint()
+    else:
+        print("refreshing configured documentation sources...", flush=True)
+        refreshed = refresh_sources(store, chunking_revision=os.getenv("RAG_CHUNKING_REVISION", "v1"))
+        corpus_fingerprint = refreshed.corpus_fingerprint
+    if not args.repair_chunks and not args.resume_snapshot and store.active_snapshot_fingerprint() == corpus_fingerprint:
         print(
             "App snapshot already matches the refreshed corpus; skipping embedding build.",
             flush=True,
@@ -85,7 +95,7 @@ def main() -> None:
         publisher=VolumePublisher(store, app_snapshot_root(settings.volume_path)),
         chunks=chunks,
         embedder=embedder,
-        corpus_fingerprint=refreshed.corpus_fingerprint,
+        corpus_fingerprint=corpus_fingerprint,
         materialize=True,
     )
     print(

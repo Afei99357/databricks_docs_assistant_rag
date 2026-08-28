@@ -213,7 +213,17 @@ just rebuild-index
 
 Rebuilds the local FAISS snapshot from persisted vectors even when the corpus fingerprint is
 unchanged. It does not fetch, re-chunk, or re-embed content; use it only when local FAISS
-artifacts need replacement.
+artifacts need replacement. It fails if any compatible vectors are missing.
+
+#### Resume embedding and snapshot publication
+
+```bash
+just resume-snapshot
+```
+
+Uses the persisted chunks without fetching or parsing sources, embeds only missing vectors, and
+publishes a new local snapshot. Use this after a refresh was interrupted during embedding or
+snapshot construction.
 
 The local server does not use the Databricks App service principal, OBO identity, or hosted
 model endpoints.
@@ -377,6 +387,17 @@ just bootstrap-run
 Runs the Databricks refresh Workflow against the configured source roots. It re-chunks changed
 documents, embeds only missing vectors, and publishes a new App snapshot only when the corpus or
 embedding specification changed.
+
+#### Resume embedding and snapshot publication
+
+```bash
+just bootstrap-deploy
+just bootstrap-resume-snapshot
+```
+
+Deploys the current Job code, then runs it with `resume_snapshot=true`. The Workflow skips source
+fetching and parsing, uses the persisted Delta chunks, embeds only missing vectors, and activates
+the new App snapshot.
 
 #### Fully re-chunk and re-index the App corpus
 
