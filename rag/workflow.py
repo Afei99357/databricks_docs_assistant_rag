@@ -15,7 +15,7 @@ from rag.ingest.lifecycle import REMOVAL_THRESHOLD
 from rag.ingest.pipeline import ingest_source
 from rag.ingest.sources import CuratedDoc, discover_root, load_curated_docs, load_discovery_roots
 from rag.models import Chunk, Document
-from rag.store import DatabricksStore
+from rag.storage.protocol import CorpusStore
 
 
 @dataclass(frozen=True)
@@ -110,7 +110,7 @@ def _failure(previous: Document | None, source: CuratedDoc, outcome: str) -> Doc
     )
 
 
-def refresh_sources(store: DatabricksStore) -> RefreshResult:
+def refresh_sources(store: CorpusStore) -> RefreshResult:
     """Refresh sources incrementally; snapshot publication is a separate step."""
     previous = store.documents()
     sources = official_sources()
@@ -222,7 +222,7 @@ def build_snapshot(
 
 
 def publish_volume_snapshot(
-    store: DatabricksStore,
+    store: CorpusStore,
     *,
     volume_path: str,
     chunks: list[Chunk],
