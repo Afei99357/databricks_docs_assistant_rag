@@ -47,6 +47,15 @@ class SQLiteStore:
                 conn.execute(statement)
         self._add_missing_columns(
             conn,
+            "rag_documents",
+            {
+                "chunked_content_hash": "TEXT",
+                "chunked_source_last_updated": "TEXT",
+                "chunked_document_version": "TEXT",
+            },
+        )
+        self._add_missing_columns(
+            conn,
             "rag_index_snapshots",
             {
                 "embedding_revision": "TEXT NOT NULL DEFAULT 'v1'",
@@ -70,7 +79,7 @@ class SQLiteStore:
         rows = (
             self._connect()
             .execute(
-                "SELECT doc_id,requested_url,canonical_url,title,category,source_last_updated,source_content_hash,document_version,status,source_origins,indexed_content_hash,indexed_source_last_updated,consecutive_404_count,error_message FROM rag_documents"
+                "SELECT doc_id,requested_url,canonical_url,title,category,source_last_updated,source_content_hash,document_version,status,source_origins,indexed_content_hash,indexed_source_last_updated,consecutive_404_count,error_message,chunked_content_hash,chunked_source_last_updated,chunked_document_version FROM rag_documents"
             )
             .fetchall()
         )
@@ -104,6 +113,9 @@ class SQLiteStore:
             "indexed_source_last_updated": document.indexed_source_last_updated,
             "consecutive_404_count": document.consecutive_404_count,
             "error_message": document.error_message,
+            "chunked_content_hash": document.chunked_content_hash,
+            "chunked_source_last_updated": document.chunked_source_last_updated,
+            "chunked_document_version": document.chunked_document_version,
             "last_run_action": action,
         }
         cols = list(v)
@@ -151,7 +163,7 @@ class SQLiteStore:
         n = c.execute(
             "SELECT count(*) FROM rag_documents WHERE indexed_content_hash IS NOT NULL"
         ).fetchone()[0]
-        c.execute("UPDATE rag_documents SET indexed_content_hash=NULL")
+        c.execute("UPDATE rag_documents SET indexed_content_hash=NULL, chunked_content_hash=NULL, chunked_source_last_updated=NULL, chunked_document_version=NULL")
         return n
 
     def current_chunks(self):
