@@ -205,16 +205,6 @@ In Databricks-backed mode, both local and App snapshots read the same Delta tabl
 repair fixes stored text for both; each snapshot must still be rebuilt with its own embedding
 model. SQLite mode has an independent local corpus and snapshot.
 
-#### Rebuild FAISS from cached vectors
-
-```bash
-just rebuild-index
-```
-
-Rebuilds the local FAISS snapshot from persisted vectors even when the corpus fingerprint is
-unchanged. It does not fetch, re-chunk, or re-embed content; use it only when local FAISS
-artifacts need replacement. It fails if any compatible vectors are missing.
-
 #### Resume an interrupted local snapshot
 
 ```bash
@@ -224,6 +214,16 @@ just resume-snapshot
 Uses the persisted chunks without fetching or parsing sources, embeds only missing vectors, and
 publishes a new local snapshot. Use this after a refresh was interrupted during embedding or
 snapshot construction.
+
+#### Rebuild FAISS from cached vectors
+
+```bash
+just rebuild-index
+```
+
+Rebuilds the local FAISS snapshot from persisted vectors even when the corpus fingerprint is
+unchanged. It does not fetch, re-chunk, or re-embed content; use it only when local FAISS
+artifacts need replacement. It fails if any compatible vectors are missing.
 
 The local server does not use the Databricks App service principal, OBO identity, or hosted
 model endpoints.
