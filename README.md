@@ -215,7 +215,7 @@ Rebuilds the local FAISS snapshot from persisted vectors even when the corpus fi
 unchanged. It does not fetch, re-chunk, or re-embed content; use it only when local FAISS
 artifacts need replacement. It fails if any compatible vectors are missing.
 
-#### Resume embedding and snapshot publication
+#### Resume an interrupted local snapshot
 
 ```bash
 just resume-snapshot
@@ -388,7 +388,7 @@ Runs the Databricks refresh Workflow against the configured source roots. It re-
 documents, embeds only missing vectors, and publishes a new App snapshot only when the corpus or
 embedding specification changed.
 
-#### Resume embedding and snapshot publication
+#### Resume an interrupted App snapshot
 
 ```bash
 just bootstrap-deploy
