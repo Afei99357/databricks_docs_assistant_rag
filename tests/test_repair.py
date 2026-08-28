@@ -62,7 +62,8 @@ def _install_stubs(monkeypatch, cli, *, fingerprint):
     monkeypatch.setenv("RAG_CATALOG", "cat")
     monkeypatch.setenv("RAG_SCHEMA", "sch")
     monkeypatch.setenv("RAG_WAREHOUSE_ID", "wh")
-    monkeypatch.setattr(cli, "DatabricksStore", lambda *a, **k: _Store())
+    from rag import storage
+    monkeypatch.setattr(storage, "create_store", lambda *a, **k: _Store())
     monkeypatch.setattr(
         cli, "refresh_sources", lambda *a, **k: type("R", (), {"corpus_fingerprint": fingerprint})()
     )

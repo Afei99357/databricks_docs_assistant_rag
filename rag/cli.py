@@ -15,7 +15,6 @@ from rag.index.embeddings import OllamaEmbeddingProvider
 from rag.index.faiss_store import read_active_fingerprint
 from rag.index.runtime import ActiveSnapshotRetriever, app_snapshot_root
 from rag.llm.providers import OpenAICompatibleProvider
-from rag.storage.databricks import DatabricksStore, VolumePublisher
 from rag.workflow import (
     build_snapshot,
     official_sources,
@@ -32,6 +31,8 @@ def discover() -> None:
 
 
 def setup_db() -> None:
+    from rag.storage.databricks import DatabricksStore
+
     settings = Settings.from_env()
     DatabricksStore(settings.warehouse_id, settings.databricks_profile).apply_schema(
         Path(__file__).parents[1] / "sql/001_rag_schema.sql",
@@ -96,11 +97,14 @@ def serve() -> None:
     settings = Settings.from_env()
     retriever, provider, agent_provider = _local_stack(settings)
     from rag.app.web import create_app
+    from rag.storage import create_store
 
-    store = DatabricksStore(
-        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace,
-        provider=provider.name, model=provider.model,
-        agent_provider=agent_provider.name, agent_model=agent_provider.model,
+    store = create_store(
+        settings,
+        provider=provider.name,
+        model=provider.model,
+        agent_provider=agent_provider.name,
+        agent_model=agent_provider.model,
     )
     agent = RetrievalAgent(
         retriever, agent_provider, candidates_per_search=settings.agent_candidates_per_search
@@ -122,6 +126,7 @@ def build_app_snapshot() -> None:
     """Build the App-compatible FAISS snapshot with Databricks Qwen embeddings."""
     settings = Settings.from_env()
     from rag.index.embeddings import DatabricksEmbeddingProvider
+    from rag.storage.databricks import DatabricksStore, VolumePublisher
 
     store = DatabricksStore(
         settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace
@@ -160,13 +165,16 @@ def build_local_snapshot(*, force: bool = False) -> None:
     root = os.getenv("RAG_LOCAL_INDEX_DIR")
     if not root:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to the local snapshot directory")
-    store = DatabricksStore(
-        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace
-    )
+    from rag.storage import create_store
+
+    store = create_store(settings)
     print("refreshing configured sources and chunks...", flush=True)
     refreshed = refresh_sources(store)
     chunks = store.current_chunks()
     if not force and read_active_fingerprint(root) == refreshed.corpus_fingerprint:
+        # A fresh SQLite store can reuse an existing local FAISS snapshot.  Its
+        # manifest still needs to record that these chunks were materialized.
+        store.mark_documents_materialized()
         print("local snapshot already matches the refreshed corpus; skipping embedding build.")
         return
     print(f"building local FAISS snapshot from {len(chunks)} chunks...", flush=True)
@@ -190,9 +198,9 @@ def repair_chunks() -> None:
     ordinary refresh would skip them all as unchanged.
     """
     settings = Settings.from_env()
-    store = DatabricksStore(
-        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace
-    )
+    from rag.storage import create_store
+
+    store = create_store(settings)
     affected = store.clear_indexed_content_hashes()
     print(f"cleared the indexed content hash for {affected} documents; every one will re-chunk.")
     build_local_snapshot(force=True)

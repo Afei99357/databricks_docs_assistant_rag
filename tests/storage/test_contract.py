@@ -31,16 +31,17 @@ from rag.config import Settings
 from rag.models import Answer
 from rag.storage import create_store
 
-pytestmark = pytest.mark.skipif(
-    not os.getenv("RAG_STORAGE_CONTRACT"),
-    reason="opt-in: writes to a real warehouse; run via just test-storage-databricks",
-)
+BACKENDS = ["sqlite"] + (["databricks"] if os.getenv("RAG_STORAGE_CONTRACT") else [])
 
 OWNER = "storage-contract-test@example.invalid"
 
 
-@pytest.fixture(scope="module")
-def store():
+@pytest.fixture(params=BACKENDS)
+def store(request, tmp_path):
+    if request.param == "sqlite":
+        from rag.storage.sqlite import SQLiteStore
+
+        return SQLiteStore(str(tmp_path / "contract.sqlite"))
     return create_store(Settings.from_env())
 
 

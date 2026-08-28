@@ -79,6 +79,10 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
    `RAG_AGENT_CANDIDATES_PER_SEARCH` is the maximum number of ranked chunks
    exposed to the agent for each search tool call. The default is 10.
 
+   For a fully local store, set `RAG_STORAGE_BACKEND=sqlite`. It needs no
+   warehouse configuration; `RAG_SQLITE_PATH` defaults to `./data/local.sqlite`
+   and its parent directory is created automatically.
+
 3. Start Ollama and make sure the embedding model is available:
 
    ```bash
@@ -149,6 +153,11 @@ roots recursively (bounded to 250 pages per root) plus the manual supplements in
 `rag/ingest/config/curated_urls.yaml`. It only rewrites changed document chunks. A local FAISS
 snapshot is rebuilt only when the governed corpus fingerprint differs from the local active
 snapshot; a date change published by Databricks also requests a conservative rebuild.
+
+Use `just index-force` to rebuild the local embedding and FAISS artifacts even when the
+corpus fingerprint is unchanged. Unlike `just repair-chunks`, it does not clear hashes or
+re-chunk documents; it is useful after changing the embedding runtime or when you need a
+fresh local snapshot.
 
 The local server does not use the Databricks App service principal, OBO identity, or hosted
 model endpoints.

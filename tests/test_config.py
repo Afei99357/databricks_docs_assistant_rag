@@ -36,6 +36,47 @@ def test_storage_backend_defaults_to_databricks_when_unset(monkeypatch):
     assert settings.storage_backend == "databricks"
 
 
+def test_sqlite_backend_does_not_require_warehouse_config(monkeypatch):
+    for name in ("RAG_CATALOG", "RAG_SCHEMA", "RAG_WAREHOUSE_ID"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("RAG_STORAGE_BACKEND", "sqlite")
+
+    settings = Settings.from_env()
+
+    assert settings.storage_backend == "sqlite"
+    assert settings.catalog == ""
+    assert settings.warehouse_id == ""
+
+
+def test_sqlite_path_defaults_under_data(monkeypatch):
+    monkeypatch.setenv("RAG_STORAGE_BACKEND", "sqlite")
+    monkeypatch.delenv("RAG_SQLITE_PATH", raising=False)
+    for name in ("RAG_CATALOG", "RAG_SCHEMA", "RAG_WAREHOUSE_ID"):
+        monkeypatch.delenv(name, raising=False)
+
+    assert Settings.from_env().sqlite_path == "./data/local.sqlite"
+
+
+def test_sqlite_path_is_overridable(monkeypatch):
+    monkeypatch.setenv("RAG_STORAGE_BACKEND", "sqlite")
+    monkeypatch.setenv("RAG_SQLITE_PATH", "/tmp/custom.sqlite")
+    for name in ("RAG_CATALOG", "RAG_SCHEMA", "RAG_WAREHOUSE_ID"):
+        monkeypatch.delenv(name, raising=False)
+
+    assert Settings.from_env().sqlite_path == "/tmp/custom.sqlite"
+
+
+def test_databricks_backend_still_requires_warehouse_config(monkeypatch):
+    monkeypatch.delenv("RAG_STORAGE_BACKEND", raising=False)
+    for name in ("RAG_CATALOG", "RAG_SCHEMA", "RAG_WAREHOUSE_ID"):
+        monkeypatch.delenv(name, raising=False)
+
+    import pytest
+
+    with pytest.raises(ValueError, match="missing required configuration"):
+        Settings.from_env()
+
+
 def test_legacy_ollama_variables_remain_supported(monkeypatch):
     for name in ("RAG_CHAT_BASE_URL", "RAG_CHAT_MODEL", "RAG_CHAT_API_KEY"):
         monkeypatch.delenv(name, raising=False)

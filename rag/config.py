@@ -23,6 +23,7 @@ class Settings:
     agent_model: str | None
     agent_api_key: str | None
     storage_backend: str = "databricks"
+    sqlite_path: str = "./data/local.sqlite"
 
     @property
     def namespace(self) -> str:
@@ -34,15 +35,17 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        required = ("RAG_CATALOG", "RAG_SCHEMA", "RAG_WAREHOUSE_ID")
-        missing = [name for name in required if not os.getenv(name)]
-        if missing:
-            raise ValueError("missing required configuration: " + ", ".join(missing))
+        backend = os.getenv("RAG_STORAGE_BACKEND", "databricks")
+        if backend == "databricks":
+            required = ("RAG_CATALOG", "RAG_SCHEMA", "RAG_WAREHOUSE_ID")
+            missing = [name for name in required if not os.getenv(name)]
+            if missing:
+                raise ValueError("missing required configuration: " + ", ".join(missing))
         # Local chat servers all use the OpenAI-compatible /v1 API. The old
         # names remain fallbacks so existing private .env files still start.
         legacy_base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_BASE_URL")
         legacy_model = os.getenv("OPENAI_MODEL") or os.getenv("OLLAMA_MODEL")
-        return cls(os.environ["RAG_CATALOG"], os.environ["RAG_SCHEMA"], os.environ["RAG_WAREHOUSE_ID"],
+        return cls(os.getenv("RAG_CATALOG", ""), os.getenv("RAG_SCHEMA", ""), os.getenv("RAG_WAREHOUSE_ID", ""),
                    os.getenv("RAG_ARTIFACT_VOLUME", "rag_artifacts"),
                    os.getenv("RAG_EMBEDDING_MODEL", "qwen3-embedding:4b"),
                    int(os.getenv("RAG_AGENT_CANDIDATES_PER_SEARCH", "10")), float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.35")),
@@ -53,4 +56,5 @@ class Settings:
                    os.getenv("RAG_DATABRICKS_PROFILE") or None,
                    os.getenv("RAG_AGENT_BASE_URL") or None, os.getenv("RAG_AGENT_MODEL") or None,
                    os.getenv("RAG_AGENT_API_KEY") or None,
-                   os.getenv("RAG_STORAGE_BACKEND", "databricks"))
+                   backend,
+                   os.getenv("RAG_SQLITE_PATH", "./data/local.sqlite"))
