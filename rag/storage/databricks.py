@@ -615,15 +615,3 @@ class VolumePublisher:
             )
         return remote_dir
 
-
-def sql_literal(value: object) -> str:
-    if value is None:
-        return "NULL"
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, (int, float)):
-        return str(value)
-    # Databricks SQL escapes with backslashes, not SQL-standard quote doubling:
-    # a doubled '' is silently dropped, deleting every apostrophe in the value.
-    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
-
