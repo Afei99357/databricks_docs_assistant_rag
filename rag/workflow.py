@@ -15,7 +15,7 @@ from rag.ingest.lifecycle import REMOVAL_THRESHOLD
 from rag.ingest.pipeline import ingest_source
 from rag.ingest.sources import CuratedDoc, discover_root, load_curated_docs, load_discovery_roots
 from rag.models import Chunk, Document
-from rag.storage.protocol import CorpusStore
+from rag.storage.protocol import ArtifactPublisher, CorpusStore
 
 
 @dataclass(frozen=True)
@@ -221,30 +221,24 @@ def build_snapshot(
     return build_and_activate(chunks, embedder, local_root, corpus_fingerprint=corpus_fingerprint)
 
 
-def publish_volume_snapshot(
+def publish_snapshot(
     store: CorpusStore,
     *,
-    volume_path: str,
+    publisher: ArtifactPublisher,
     chunks: list[Chunk],
     embedder,
     corpus_fingerprint: str | None = None,
     materialize: bool = False,
 ) -> PublishedSnapshot:
-    """Build/upload immutable artifacts, then atomically select the new snapshot."""
+    """Build immutable artifacts locally, publish them, then atomically select the new snapshot."""
     with tempfile.TemporaryDirectory(prefix="rag-app-snapshot-") as temporary:
         published = build_and_activate(
             chunks, embedder, temporary, corpus_fingerprint=corpus_fingerprint
         )
-        snapshot_id = published.metadata.snapshot_id
-        remote_dir = f"{volume_path.rstrip('/')}/snapshots/{snapshot_id}"
-        store.upload(published.local_directory / "index.faiss", f"{remote_dir}/index.faiss")
-        store.upload(published.local_directory / "chunk_map.json", f"{remote_dir}/chunk_map.json")
-        store.upload(
-            Path(temporary) / "active_snapshot.json",
-            f"{volume_path.rstrip('/')}/active_snapshot.json",
-            overwrite=True,
+        published_location = publisher.publish(
+            published.local_directory, published.metadata.snapshot_id
         )
-        metadata = replace(published.metadata, artifact_path=f"{remote_dir}/index.faiss")
+        metadata = replace(published.metadata, artifact_path=f"{published_location}/index.faiss")
         store.activate_snapshot(metadata)
         if materialize:
             store.mark_documents_materialized()

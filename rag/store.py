@@ -589,6 +589,33 @@ class DatabricksStore:
         )
 
 
+class VolumePublisher:
+    """Publishes snapshot artifacts to a Unity Catalog Volume.
+
+    Alongside ``index.faiss`` and ``chunk_map.json`` under the per-snapshot
+    directory, this also republishes the top-level ``active_snapshot.json``
+    manifest (overwriting the previous one). That manifest is how the deployed
+    App's Volume-backed runtime (``rag.index.runtime``) discovers the active
+    snapshot by polling a file instead of querying the database -- it has no
+    other way to learn a new snapshot is live, so dropping this upload would
+    silently break that sync path even though the database row is correct.
+    """
+
+    def __init__(self, store: DatabricksStore, volume_path: str):
+        self.store, self.volume_path = store, volume_path
+
+    def publish(self, local_directory: Path, snapshot_id: str) -> str:
+        remote_dir = f"{self.volume_path.rstrip('/')}/snapshots/{snapshot_id}"
+        self.store.upload(local_directory / "index.faiss", f"{remote_dir}/index.faiss")
+        self.store.upload(local_directory / "chunk_map.json", f"{remote_dir}/chunk_map.json")
+        manifest = local_directory.parent.parent / "active_snapshot.json"
+        if manifest.exists():
+            self.store.upload(
+                manifest, f"{self.volume_path.rstrip('/')}/active_snapshot.json", overwrite=True
+            )
+        return remote_dir
+
+
 def sql_literal(value: object) -> str:
     if value is None:
         return "NULL"

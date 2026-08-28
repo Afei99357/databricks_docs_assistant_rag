@@ -15,11 +15,11 @@ from rag.index.embeddings import OllamaEmbeddingProvider
 from rag.index.faiss_store import read_active_fingerprint
 from rag.index.runtime import ActiveSnapshotRetriever, app_snapshot_root
 from rag.llm.providers import OpenAICompatibleProvider
-from rag.store import DatabricksStore
+from rag.store import DatabricksStore, VolumePublisher
 from rag.workflow import (
     build_snapshot,
     official_sources,
-    publish_volume_snapshot,
+    publish_snapshot,
     refresh_sources,
 )
 
@@ -136,9 +136,9 @@ def build_app_snapshot() -> None:
         return
     chunks = store.current_chunks()
     app_index_root = app_snapshot_root(settings.volume_path)
-    published = publish_volume_snapshot(
+    published = publish_snapshot(
         store,
-        volume_path=app_index_root,
+        publisher=VolumePublisher(store, app_index_root),
         chunks=chunks,
         embedder=embedder,
         corpus_fingerprint=refreshed.corpus_fingerprint,

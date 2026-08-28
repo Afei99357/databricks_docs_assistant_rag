@@ -8,8 +8,8 @@ import os
 from rag.config import Settings
 from rag.index.embeddings import DatabricksEmbeddingProvider
 from rag.index.runtime import app_snapshot_root
-from rag.store import DatabricksStore
-from rag.workflow import publish_volume_snapshot, refresh_sources
+from rag.store import DatabricksStore, VolumePublisher
+from rag.workflow import publish_snapshot, refresh_sources
 
 
 def parse_args() -> argparse.Namespace:
@@ -72,9 +72,9 @@ def main() -> None:
         batch_size=args.embedding_batch_size,
         min_interval_seconds=args.embedding_min_interval_seconds,
     )
-    published = publish_volume_snapshot(
+    published = publish_snapshot(
         store,
-        volume_path=app_snapshot_root(settings.volume_path),
+        publisher=VolumePublisher(store, app_snapshot_root(settings.volume_path)),
         chunks=chunks,
         embedder=embedder,
         corpus_fingerprint=refreshed.corpus_fingerprint,
