@@ -9,8 +9,7 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_documents (
   http_status INT, error_message STRING, consecutive_404_count INT NOT NULL,
   retrieved_at TIMESTAMP, last_success_at TIMESTAMP, last_run_at TIMESTAMP, removed_at TIMESTAMP,
   source_origins ARRAY<STRING>, indexed_content_hash STRING, indexed_source_last_updated STRING,
-  last_run_action STRING, chunked_content_hash STRING, chunked_source_last_updated STRING,
-  chunked_document_version STRING
+  last_run_action STRING
 ) USING DELTA;
 
 

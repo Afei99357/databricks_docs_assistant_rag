@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import time
 from pathlib import Path
 
 from rag.agent.retrieval import RetrievalAgent
@@ -197,32 +196,17 @@ def build_local_snapshot(*, force: bool = False) -> None:
         flush=True,
     )
     if missing:
-        batch_size = max(1, int(getattr(embedder, "batch_size", len(missing))))
-        total_batches = (len(missing) + batch_size - 1) // batch_size
-        for start in range(0, len(missing), batch_size):
-            batch_number = start // batch_size + 1
-            batch_chunks = missing[start : start + batch_size]
-            print(
-                f"Caching embedding batch {batch_number}/{total_batches} "
-                f"({len(batch_chunks)} chunks)...",
-                flush=True,
-            )
-            vectors = embedder.embed([chunk.text for chunk in batch_chunks])
-            if len(vectors) != len(batch_chunks):
-                raise RuntimeError("embedding provider returned an unexpected number of vectors")
-            store.save_embeddings(
-                [
-                    StoredEmbedding(
-                        chunk.chunk_id,
-                        EmbeddingSpec(spec.model, spec.revision, len(vector)),
-                        tuple(vector),
-                    )
-                    for chunk, vector in zip(batch_chunks, vectors)
-                ]
-            )
-            interval = float(getattr(embedder, "min_interval_seconds", 0.0))
-            if interval and batch_number < total_batches:
-                time.sleep(interval)
+        vectors = embedder.embed([chunk.text for chunk in missing])
+        store.save_embeddings(
+            [
+                StoredEmbedding(
+                    chunk.chunk_id,
+                    EmbeddingSpec(spec.model, spec.revision, len(vector)),
+                    tuple(vector),
+                )
+                for chunk, vector in zip(missing, vectors)
+            ]
+        )
     embeddings = store.embeddings_for(chunks, spec)
     published = build_snapshot_from_vectors(
         chunks,

@@ -33,16 +33,3 @@ def test_sqlite_schema_upgrade_adds_snapshot_revision_columns(tmp_path):
     check = sqlite3.connect(path)
     columns = {row[1] for row in check.execute("PRAGMA table_info(rag_index_snapshots)")}
     assert {"embedding_revision", "chunking_revision"} <= columns
-
-
-def test_sqlite_schema_contains_chunk_checkpoints(tmp_path):
-    store = SQLiteStore(str(tmp_path / "checkpoint.sqlite"))
-    columns = {
-        row[1]
-        for row in store._connect().execute("PRAGMA table_info(rag_documents)")
-    }
-    assert {
-        "chunked_content_hash",
-        "chunked_source_last_updated",
-        "chunked_document_version",
-    } <= columns

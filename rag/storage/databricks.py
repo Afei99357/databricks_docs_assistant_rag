@@ -122,9 +122,6 @@ class DatabricksStore:
                 "indexed_content_hash": "STRING",
                 "indexed_source_last_updated": "STRING",
                 "last_run_action": "STRING",
-                "chunked_content_hash": "STRING",
-                "chunked_source_last_updated": "STRING",
-                "chunked_document_version": "STRING",
             },
         )
         self._add_missing_columns(
@@ -376,8 +373,7 @@ class DatabricksStore:
         rows = self.execute(
             f"SELECT doc_id,requested_url,canonical_url,title,category,source_last_updated,"
             f"source_content_hash,document_version,status,source_origins,indexed_content_hash,"
-            f"indexed_source_last_updated,consecutive_404_count,error_message,chunked_content_hash,"
-            f"chunked_source_last_updated,chunked_document_version "
+            f"indexed_source_last_updated,consecutive_404_count,error_message "
             f"FROM {self.namespace}.rag_documents"
         ).rows
         result = {}
@@ -400,9 +396,6 @@ class DatabricksStore:
                 row[11],
                 int(row[12] or 0),
                 row[13],
-                row[14],
-                row[15],
-                row[16],
             )
         return result
 
@@ -425,9 +418,6 @@ class DatabricksStore:
             "consecutive_404_count": document.consecutive_404_count,
             "error_message": document.error_message,
             "last_run_action": action,
-            "chunked_content_hash": document.chunked_content_hash,
-            "chunked_source_last_updated": document.chunked_source_last_updated,
-            "chunked_document_version": document.chunked_document_version,
         }
         # Columns whose source-row expression is not a plain bound parameter.
         raw = {
@@ -518,10 +508,7 @@ class DatabricksStore:
             f"SELECT count(*) FROM {table} WHERE indexed_content_hash IS NOT NULL"
         ).rows
         affected = int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
-        self.execute(
-            f"UPDATE {table} SET indexed_content_hash = NULL, chunked_content_hash = NULL, "
-            "chunked_source_last_updated = NULL, chunked_document_version = NULL"
-        )
+        self.execute(f"UPDATE {table} SET indexed_content_hash = NULL")
         return affected
 
     def active_snapshot_fingerprint(self) -> str | None:
