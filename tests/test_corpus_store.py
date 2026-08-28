@@ -55,7 +55,7 @@ def test_chunk_inserts_batch_so_large_documents_stay_under_the_parameter_ceiling
         })()
         for i in range(109)
     ]
-    store.replace_document_chunks("cat.sch.rag_chunks", document, chunks)
+    store.replace_document_chunks(document, chunks)
     inserts = [c for c in recorder.calls if c[0].lstrip().startswith("INSERT")]
     assert len(inserts) == 3  # 40 + 40 + 29
     assert all(len(c[1]) <= 512 for c in inserts)
@@ -72,7 +72,7 @@ def test_apostrophes_reach_the_parameters_not_the_statement():
         "position": 0, "text": "VALUES ('low', 'high')",
         "heading_path": (), "source_url": "u", "source_title": "T",
     })()
-    store.replace_document_chunks("cat.sch.rag_chunks", document, [chunk])
+    store.replace_document_chunks(document, [chunk])
     insert = next(c for c in recorder.calls if c[0].lstrip().startswith("INSERT"))
     assert "'low'" not in insert[0]
     assert "VALUES ('low', 'high')" in insert[1].values()
@@ -84,7 +84,7 @@ def test_replace_document_chunks_deletes_the_prior_version_first():
     recorder = Recorder()
     store.execute = recorder.execute
     document = type("D", (), {"doc_id": "d", "document_version": "v2"})()
-    store.replace_document_chunks("cat.sch.rag_chunks", document, [])
+    store.replace_document_chunks(document, [])
     assert len(recorder.calls) == 1
     statement, parameters = recorder.calls[0]
     assert statement.lstrip().startswith("DELETE")
@@ -102,7 +102,7 @@ def test_upsert_document_binds_apostrophes_and_arrays_as_parameters():
         content_hash="h", document_version="v", status="ok",
         source_origins=("crawl", "sitemap"),
     )
-    store.upsert_document("cat.sch.rag_documents", document, action="published")
+    store.upsert_document(document, action="published")
     statement, parameters = recorder.calls[0]
     assert "Databricks's docs" not in statement
     assert parameters["title"] == "Databricks's docs"
@@ -110,3 +110,15 @@ def test_upsert_document_binds_apostrophes_and_arrays_as_parameters():
     assert parameters["source_origins"] == '["crawl", "sitemap"]'
     assert "current_timestamp()" in statement
     assert "retrieved_at" not in parameters
+
+
+def test_corpus_methods_take_no_table_argument():
+    import inspect
+
+    for name in (
+        "documents",
+        "clear_indexed_content_hashes",
+        "mark_documents_materialized",
+        "active_snapshot_fingerprint",
+    ):
+        assert "table" not in inspect.signature(getattr(DatabricksStore, name)).parameters

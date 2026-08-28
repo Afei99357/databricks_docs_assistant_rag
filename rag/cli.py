@@ -130,25 +130,19 @@ def build_app_snapshot() -> None:
         os.getenv("RAG_DATABRICKS_EMBEDDING_ENDPOINT", "databricks-qwen3-embedding-0-6b"),
         profile=settings.databricks_profile,
     )
-    refreshed = refresh_sources(
-        store,
-        document_table=f"{settings.namespace}.rag_documents",
-        chunk_table=f"{settings.namespace}.rag_chunks",
-    )
-    snapshot_table = f"{settings.namespace}.rag_index_snapshots"
-    if store.active_snapshot_fingerprint(snapshot_table) == refreshed.corpus_fingerprint:
+    refreshed = refresh_sources(store)
+    if store.active_snapshot_fingerprint() == refreshed.corpus_fingerprint:
         print("App snapshot already matches the refreshed corpus; skipping embedding build.")
         return
     chunks = store.current_chunks()
     app_index_root = app_snapshot_root(settings.volume_path)
     published = publish_volume_snapshot(
         store,
-        namespace=settings.namespace,
         volume_path=app_index_root,
         chunks=chunks,
         embedder=embedder,
         corpus_fingerprint=refreshed.corpus_fingerprint,
-        document_table=f"{settings.namespace}.rag_documents",
+        materialize=True,
     )
     print(
         f"published App snapshot {published.metadata.snapshot_id} ({published.metadata.chunk_count} chunks)"
@@ -170,11 +164,7 @@ def build_local_snapshot(*, force: bool = False) -> None:
         settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace
     )
     print("refreshing configured sources and chunks...", flush=True)
-    refreshed = refresh_sources(
-        store,
-        document_table=f"{settings.namespace}.rag_documents",
-        chunk_table=f"{settings.namespace}.rag_chunks",
-    )
+    refreshed = refresh_sources(store)
     chunks = store.current_chunks()
     if not force and read_active_fingerprint(root) == refreshed.corpus_fingerprint:
         print("local snapshot already matches the refreshed corpus; skipping embedding build.")
@@ -186,9 +176,7 @@ def build_local_snapshot(*, force: bool = False) -> None:
     published = build_snapshot(
         chunks, embedder, root, corpus_fingerprint=refreshed.corpus_fingerprint
     )
-    store.mark_documents_materialized(
-        f"{settings.namespace}.rag_documents", chunk_table=f"{settings.namespace}.rag_chunks"
-    )
+    store.mark_documents_materialized()
     print(
         f"published local snapshot {published.metadata.snapshot_id} "
         f"({published.metadata.chunk_count} chunks)"
@@ -202,9 +190,10 @@ def repair_chunks() -> None:
     ordinary refresh would skip them all as unchanged.
     """
     settings = Settings.from_env()
-    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
-    table = f"{settings.namespace}.rag_documents"
-    affected = store.clear_indexed_content_hashes(table)
+    store = DatabricksStore(
+        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace
+    )
+    affected = store.clear_indexed_content_hashes()
     print(f"cleared the indexed content hash for {affected} documents; every one will re-chunk.")
     build_local_snapshot(force=True)
 

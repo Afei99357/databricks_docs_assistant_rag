@@ -110,11 +110,9 @@ def _failure(previous: Document | None, source: CuratedDoc, outcome: str) -> Doc
     )
 
 
-def refresh_sources(
-    store: DatabricksStore, *, document_table: str, chunk_table: str
-) -> RefreshResult:
+def refresh_sources(store: DatabricksStore) -> RefreshResult:
     """Refresh sources incrementally; snapshot publication is a separate step."""
-    previous = store.documents(document_table)
+    previous = store.documents()
     sources = official_sources()
     current_ids = {source.doc_id for source in sources}
     counts = RefreshSummary(discovered=len(sources))
@@ -131,14 +129,14 @@ def refresh_sources(
                 if prior
                 else _failure(None, source, "network_error")
             )
-            store.upsert_document(document_table, failure, action="failed")
+            store.upsert_document(failure, action="failed")
             previous[source.doc_id] = failure
             counts = replace(counts, failed=counts.failed + 1)
             continue
         if item.outcome != "ok" or item.extracted is None:
             failed = _failure(prior, source, item.outcome)
             store.upsert_document(
-                document_table, failed, action="removed" if failed.status == "removed" else "failed"
+                failed, action="removed" if failed.status == "removed" else "failed"
             )
             previous[source.doc_id] = failed
             counts = replace(
@@ -175,14 +173,13 @@ def refresh_sources(
                     source_title=document.title or source.slug,
                     nodes=item.extracted.nodes,
                 )
-                store.replace_document_chunks(chunk_table, document, chunks)
+                store.replace_document_chunks(document, chunks)
             store.upsert_document(
-                document_table,
                 document,
                 action="date_changed" if date_changed and not content_changed else "changed",
             )
             if content_changed:
-                store.prune_document_chunks(chunk_table, document)
+                store.prune_document_chunks(document)
             previous[document.doc_id] = document
             counts = replace(
                 counts,
@@ -190,7 +187,7 @@ def refresh_sources(
                 date_triggered=counts.date_triggered + (date_changed and not content_changed),
             )
         else:
-            store.upsert_document(document_table, document, action="unchanged")
+            store.upsert_document(document, action="unchanged")
             previous[document.doc_id] = document
             counts = replace(counts, unchanged=counts.unchanged + 1)
 
@@ -210,7 +207,7 @@ def refresh_sources(
         else:
             counts = replace(counts, failed=counts.failed + 1)
         store.upsert_document(
-            document_table, missing, action="removed" if missing.status == "removed" else "missing"
+            missing, action="removed" if missing.status == "removed" else "missing"
         )
         previous[doc_id] = missing
 
@@ -227,12 +224,11 @@ def build_snapshot(
 def publish_volume_snapshot(
     store: DatabricksStore,
     *,
-    namespace: str,
     volume_path: str,
     chunks: list[Chunk],
     embedder,
     corpus_fingerprint: str | None = None,
-    document_table: str | None = None,
+    materialize: bool = False,
 ) -> PublishedSnapshot:
     """Build/upload immutable artifacts, then atomically select the new snapshot."""
     with tempfile.TemporaryDirectory(prefix="rag-app-snapshot-") as temporary:
@@ -250,6 +246,6 @@ def publish_volume_snapshot(
         )
         metadata = replace(published.metadata, artifact_path=f"{remote_dir}/index.faiss")
         store.activate_snapshot(metadata)
-        if document_table:
-            store.mark_documents_materialized(document_table, chunk_table=f"{namespace}.rag_chunks")
+        if materialize:
+            store.mark_documents_materialized()
         return published

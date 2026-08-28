@@ -294,11 +294,12 @@ class DatabricksStore:
         with Path(local_path).open("rb") as handle:
             self.workspace.files.upload(volume_path, handle, overwrite=overwrite)
 
-    def documents(self, table: str) -> dict[str, Document]:
+    def documents(self) -> dict[str, Document]:
         rows = self.execute(
             f"SELECT doc_id,requested_url,canonical_url,title,category,source_last_updated,"
             f"source_content_hash,document_version,status,source_origins,indexed_content_hash,"
-            f"indexed_source_last_updated,consecutive_404_count,error_message FROM {table}"
+            f"indexed_source_last_updated,consecutive_404_count,error_message "
+            f"FROM {self.namespace}.rag_documents"
         ).rows
         result = {}
         for row in rows:
@@ -323,7 +324,7 @@ class DatabricksStore:
             )
         return result
 
-    def upsert_document(self, table: str, document: Document, *, action: str | None = None) -> None:
+    def upsert_document(self, document: Document, *, action: str | None = None) -> None:
         # `values` supplies both the bound parameters and the MERGE source row/update
         # list below, so the three cannot drift out of sync with each other.
         values = {
@@ -352,7 +353,8 @@ class DatabricksStore:
         source = ", ".join((raw.get(name) or f":{name}") + f" AS {name}" for name in columns)
         updates = ", ".join(f"target.{name} = source.{name}" for name in columns if name != "doc_id")
         self.execute(
-            f"MERGE INTO {table} target USING (SELECT {source}) source ON target.doc_id = source.doc_id "
+            f"MERGE INTO {self.namespace}.rag_documents target USING (SELECT {source}) source "
+            f"ON target.doc_id = source.doc_id "
             f"WHEN MATCHED THEN UPDATE SET {updates} WHEN NOT MATCHED THEN "
             f"INSERT ({', '.join(columns)}) VALUES ({', '.join('source.' + name for name in columns)})",
             parameters=values,
@@ -360,7 +362,6 @@ class DatabricksStore:
 
     def replace_document_chunks(
         self,
-        table: str,
         document: Document,
         chunks: list[Chunk],
         embedding_model: str | None = None,
@@ -377,7 +378,7 @@ class DatabricksStore:
         measured 512-parameter ceiling.
         """
         self.execute(
-            f"DELETE FROM {table} WHERE doc_id=:doc_id AND document_version=:version",
+            f"DELETE FROM {self.namespace}.rag_chunks WHERE doc_id=:doc_id AND document_version=:version",
             parameters={"doc_id": document.doc_id, "version": document.document_version},
         )
         for start in range(0, len(chunks), CHUNK_INSERT_BATCH):
@@ -403,20 +404,20 @@ class DatabricksStore:
                     f"{n}_dim": embedding_dimension,
                 }
             self.execute(
-                f"INSERT INTO {table} (chunk_id, doc_id, document_version, position, chunk_text, "
+                f"INSERT INTO {self.namespace}.rag_chunks (chunk_id, doc_id, document_version, position, chunk_text, "
                 "heading_path, source_url, source_title, embedding_model, embedding_dimension, "
                 "embedding_created_at) VALUES " + ", ".join(rows),
                 parameters=parameters,
             )
 
-    def prune_document_chunks(self, table: str, document: Document) -> None:
+    def prune_document_chunks(self, document: Document) -> None:
         """Remove superseded versions only after the manifest points at the new one."""
         self.execute(
-            f"DELETE FROM {table} WHERE doc_id=:doc_id AND document_version<>:version",
+            f"DELETE FROM {self.namespace}.rag_chunks WHERE doc_id=:doc_id AND document_version<>:version",
             parameters={"doc_id": document.doc_id, "version": document.document_version},
         )
 
-    def clear_indexed_content_hashes(self, table: str) -> int:
+    def clear_indexed_content_hashes(self) -> int:
         """Force the next refresh to re-chunk every document.
 
         A refresh rewrites chunks only when the fetched page hash differs from
@@ -425,6 +426,7 @@ class DatabricksStore:
         is skipped forever while the page itself stays put. Clearing the recorded
         hash is what makes that repairable.
         """
+        table = f"{self.namespace}.rag_documents"
         rows = self.execute(
             f"SELECT count(*) FROM {table} WHERE indexed_content_hash IS NOT NULL"
         ).rows
@@ -432,23 +434,24 @@ class DatabricksStore:
         self.execute(f"UPDATE {table} SET indexed_content_hash = NULL")
         return affected
 
-    def active_snapshot_fingerprint(self, table: str) -> str | None:
+    def active_snapshot_fingerprint(self) -> str | None:
         rows = self.execute(
-            f"SELECT corpus_fingerprint FROM {table} WHERE active=TRUE ORDER BY created_at DESC LIMIT 1"
+            f"SELECT corpus_fingerprint FROM {self.namespace}.rag_index_snapshots "
+            "WHERE active=TRUE ORDER BY created_at DESC LIMIT 1"
         ).rows
         return str(rows[0][0]) if rows and rows[0][0] else None
 
-    def mark_documents_materialized(self, table: str, *, chunk_table: str | None = None) -> None:
+    def mark_documents_materialized(self) -> None:
+        table = f"{self.namespace}.rag_documents"
         self.execute(
             f"UPDATE {table} SET indexed_content_hash=source_content_hash, "
             f"indexed_source_last_updated=source_last_updated, status='ok', "
             f"last_run_action='published' WHERE status='pending_snapshot'"
         )
-        if chunk_table:
-            self.execute(
-                f"DELETE FROM {chunk_table} WHERE doc_id IN "
-                f"(SELECT doc_id FROM {table} WHERE status='removed')"
-            )
+        self.execute(
+            f"DELETE FROM {self.namespace}.rag_chunks WHERE doc_id IN "
+            f"(SELECT doc_id FROM {table} WHERE status='removed')"
+        )
 
     def record_request_trace(
         self,

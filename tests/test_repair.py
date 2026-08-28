@@ -15,20 +15,23 @@ class Store:
 
 def test_clear_indexed_content_hashes_reports_and_clears():
     store = Store(count=275)
-    affected = DatabricksStore.clear_indexed_content_hashes(store, "cat.sch.rag_documents")
+    store.namespace = "cat.sch"
+    affected = DatabricksStore.clear_indexed_content_hashes(store)
     assert affected == 275
     assert "UPDATE cat.sch.rag_documents SET indexed_content_hash = NULL" in store.statements[-1]
 
 
 def test_clear_counts_only_documents_that_were_materialized():
     store = Store()
-    DatabricksStore.clear_indexed_content_hashes(store, "cat.sch.rag_documents")
+    store.namespace = "cat.sch"
+    DatabricksStore.clear_indexed_content_hashes(store)
     assert "indexed_content_hash IS NOT NULL" in store.statements[0]
 
 
 def test_clear_tolerates_an_empty_table():
     store = Store(count=None)
-    assert DatabricksStore.clear_indexed_content_hashes(store, "t") == 0
+    store.namespace = "cat.sch"
+    assert DatabricksStore.clear_indexed_content_hashes(store) == 0
 
 
 def test_force_skips_the_fingerprint_gate(monkeypatch):

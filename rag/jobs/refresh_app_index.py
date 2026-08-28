@@ -48,22 +48,17 @@ def main() -> None:
         artifact_volume=settings.artifact_volume,
     )
     if args.repair_chunks:
-        affected = store.clear_indexed_content_hashes(f"{settings.namespace}.rag_documents")
+        affected = store.clear_indexed_content_hashes()
         print(
             f"repair: cleared the indexed content hash for {affected} documents; "
             "every one will re-chunk.",
             flush=True,
         )
     print("refreshing configured documentation sources...", flush=True)
-    refreshed = refresh_sources(
-        store,
-        document_table=f"{settings.namespace}.rag_documents",
-        chunk_table=f"{settings.namespace}.rag_chunks",
-    )
-    snapshot_table = f"{settings.namespace}.rag_index_snapshots"
+    refreshed = refresh_sources(store)
     if (
         not args.repair_chunks
-        and store.active_snapshot_fingerprint(snapshot_table) == refreshed.corpus_fingerprint
+        and store.active_snapshot_fingerprint() == refreshed.corpus_fingerprint
     ):
         print(
             "App snapshot already matches the refreshed corpus; skipping embedding build.",
@@ -79,12 +74,11 @@ def main() -> None:
     )
     published = publish_volume_snapshot(
         store,
-        namespace=settings.namespace,
         volume_path=app_snapshot_root(settings.volume_path),
         chunks=chunks,
         embedder=embedder,
         corpus_fingerprint=refreshed.corpus_fingerprint,
-        document_table=f"{settings.namespace}.rag_documents",
+        materialize=True,
     )
     print(
         f"published App snapshot {published.metadata.snapshot_id} "
