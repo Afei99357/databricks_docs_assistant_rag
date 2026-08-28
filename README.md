@@ -399,6 +399,18 @@ Deploys the current Job code, then runs it with `resume_snapshot=true`. The Work
 fetching and parsing, uses the persisted Delta chunks, embeds only missing vectors, and activates
 the new App snapshot.
 
+#### Rebuild the App FAISS snapshot from cached vectors
+
+```bash
+just bootstrap-deploy
+just bootstrap-rebuild-index
+```
+
+Deploys the current Job code, then runs it with `rebuild_snapshot=true`. The Workflow skips source
+fetching, parsing, and embedding; it rebuilds the Databricks-embedding FAISS snapshot only when
+all compatible vectors are already present. If vectors are missing, run
+`just bootstrap-resume-snapshot` first.
+
 #### Fully re-chunk and re-index the App corpus
 
 Use this after a chunking/storage upgrade, a chunking repair, or when the existing governed

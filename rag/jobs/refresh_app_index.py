@@ -41,6 +41,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="skip source refresh and publish from the persisted current chunks",
     )
+    parser.add_argument(
+        "--rebuild-snapshot",
+        type=_parse_bool,
+        default=False,
+        help="skip source refresh and embedding; rebuild from fully cached vectors",
+    )
     return parser.parse_args(argv)
 
 
@@ -61,8 +67,8 @@ def main() -> None:
         schema=settings.schema,
         artifact_volume=settings.artifact_volume,
     )
-    if args.repair_chunks and args.resume_snapshot:
-        raise ValueError("--repair-chunks and --resume-snapshot cannot be combined")
+    if sum((args.repair_chunks, args.resume_snapshot, args.rebuild_snapshot)) > 1:
+        raise ValueError("repair, resume, and rebuild snapshot modes cannot be combined")
     if args.repair_chunks:
         affected = store.clear_indexed_content_hashes()
         print(
@@ -70,14 +76,19 @@ def main() -> None:
             "every one will re-chunk.",
             flush=True,
         )
-    if args.resume_snapshot:
+    if args.resume_snapshot or args.rebuild_snapshot:
         print("using persisted chunks; skipping source refresh...", flush=True)
         corpus_fingerprint = store.active_snapshot_fingerprint()
     else:
         print("refreshing configured documentation sources...", flush=True)
         refreshed = refresh_sources(store, chunking_revision=os.getenv("RAG_CHUNKING_REVISION", "v1"))
         corpus_fingerprint = refreshed.corpus_fingerprint
-    if not args.repair_chunks and not args.resume_snapshot and store.active_snapshot_fingerprint() == corpus_fingerprint:
+    if (
+        not args.repair_chunks
+        and not args.resume_snapshot
+        and not args.rebuild_snapshot
+        and store.active_snapshot_fingerprint() == corpus_fingerprint
+    ):
         print(
             "App snapshot already matches the refreshed corpus; skipping embedding build.",
             flush=True,
@@ -97,6 +108,7 @@ def main() -> None:
         embedder=embedder,
         corpus_fingerprint=corpus_fingerprint,
         materialize=True,
+        embed_missing=not args.rebuild_snapshot,
     )
     print(
         f"published App snapshot {published.metadata.snapshot_id} "

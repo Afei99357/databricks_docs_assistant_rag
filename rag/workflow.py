@@ -266,12 +266,17 @@ def publish_snapshot(
     materialize: bool = False,
     embedding_revision: str = "v1",
     chunking_revision: str = "v1",
+    embed_missing: bool = True,
 ) -> PublishedSnapshot:
     """Build immutable artifacts locally, publish them, then atomically select the new snapshot."""
     with tempfile.TemporaryDirectory(prefix="rag-app-snapshot-") as temporary:
         spec = EmbeddingSpec(embedder.model_name, embedding_revision)
         missing = store.missing_embeddings(chunks, spec)
         if missing:
+            if not embed_missing:
+                raise RuntimeError(
+                    f"{len(missing)} embeddings are missing; run the resume snapshot operation first"
+                )
             vectors = embedder.embed([chunk.text for chunk in missing])
             store.save_embeddings(
                 [
