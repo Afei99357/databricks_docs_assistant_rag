@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 
 from rag.config import Settings
-from rag.store import DatabricksStore, sql_literal
+from rag.storage.databricks import DatabricksStore, sql_literal
 
 
 def main() -> None:

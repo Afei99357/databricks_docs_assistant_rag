@@ -1,4 +1,4 @@
-from rag.store import to_statement_parameters
+from rag.storage.databricks import to_statement_parameters
 
 
 def test_strings_bind_verbatim_without_escaping():

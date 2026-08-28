@@ -22,6 +22,7 @@ class Settings:
     agent_base_url: str | None
     agent_model: str | None
     agent_api_key: str | None
+    storage_backend: str = "databricks"
 
     @property
     def namespace(self) -> str:
@@ -51,4 +52,5 @@ class Settings:
                    os.getenv("RAG_EMBEDDING_BASE_URL") or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
                    os.getenv("RAG_DATABRICKS_PROFILE") or None,
                    os.getenv("RAG_AGENT_BASE_URL") or None, os.getenv("RAG_AGENT_MODEL") or None,
-                   os.getenv("RAG_AGENT_API_KEY") or None)
+                   os.getenv("RAG_AGENT_API_KEY") or None,
+                   os.getenv("RAG_STORAGE_BACKEND", "databricks"))

@@ -1,4 +1,4 @@
-from rag.store import DatabricksStore
+from rag.storage.databricks import DatabricksStore
 
 
 class Store:

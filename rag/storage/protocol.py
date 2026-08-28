@@ -1,6 +1,6 @@
 """Protocols shared code depends on instead of the concrete Databricks adapter.
 
-Each protocol is derived from the actual methods on ``rag.store.DatabricksStore``
+Each protocol is derived from the actual methods on ``rag.storage.databricks.DatabricksStore``
 as they exist today. They intentionally say nothing about how a conforming
 store is implemented -- a SQLite-backed store (or any other backend) only has
 to expose the same methods with the same signatures.

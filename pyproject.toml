@@ -9,7 +9,6 @@ description = "Inspectable RAG over official Databricks documentation"
 requires-python = ">=3.10"
 dependencies = [
   "beautifulsoup4>=4.12",
-  "databricks-sdk>=0.50",
   "faiss-cpu>=1.8",
   "Flask>=3.0",
   "gunicorn>=23.0",
@@ -23,6 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.8"]
 embedding = ["sentence-transformers>=3.0", "torch>=2.0"]
+databricks = ["databricks-sdk>=0.50"]
 
 [tool.setuptools.packages.find]
 include = ["rag*"]

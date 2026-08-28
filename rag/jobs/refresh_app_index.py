@@ -8,7 +8,7 @@ import os
 from rag.config import Settings
 from rag.index.embeddings import DatabricksEmbeddingProvider
 from rag.index.runtime import app_snapshot_root
-from rag.store import DatabricksStore, VolumePublisher
+from rag.storage.databricks import DatabricksStore, VolumePublisher
 from rag.workflow import publish_snapshot, refresh_sources
 
 

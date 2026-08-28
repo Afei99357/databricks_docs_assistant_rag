@@ -1,5 +1,5 @@
+from rag.storage.databricks import DatabricksStore
 from rag.storage.protocol import ConversationStore, CorpusStore, DiagnosticsStore
-from rag.store import DatabricksStore
 
 
 def test_the_databricks_adapter_satisfies_every_row_protocol():

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from rag.models import Document, IndexSnapshot
-from rag.store import DatabricksStore
+from rag.storage.databricks import DatabricksStore
 
 
 class Recorder:

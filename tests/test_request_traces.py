@@ -2,7 +2,7 @@ from rag.agent.retrieval import RetrievalTrace, ToolStep
 from rag.llm.grounding import GroundingTrace
 from rag.llm.providers import LLMCallUsage
 from rag.models import Answer, Chunk, RetrievalResult
-from rag.store import DatabricksStore
+from rag.storage.databricks import DatabricksStore
 
 
 class Recorder:

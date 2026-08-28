@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from rag.store import VolumePublisher
+from rag.storage.databricks import VolumePublisher
 
 
 class FakeUploader:

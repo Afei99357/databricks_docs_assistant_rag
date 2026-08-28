@@ -1,4 +1,5 @@
 import pytest
+from databricks import sdk
 
 from rag.app import auth
 
@@ -15,6 +16,6 @@ def test_obo_client_requires_forwarded_token(monkeypatch):
 
 def test_obo_client_uses_only_forwarded_token(monkeypatch):
     monkeypatch.setenv("DATABRICKS_HOST", "https://workspace")
-    monkeypatch.setattr(auth, "WorkspaceClient", FakeWorkspaceClient)
+    monkeypatch.setattr(sdk, "WorkspaceClient", FakeWorkspaceClient)
     client = auth.get_user_workspace_client({"x-forwarded-access-token": "user-token"})
     assert client.kwargs == {"host": "https://workspace", "token": "user-token", "auth_type": "pat"}

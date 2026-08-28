@@ -1,5 +1,5 @@
 from rag.conversation import history_title
-from rag.store import DatabricksStore
+from rag.storage.databricks import DatabricksStore
 
 
 class Recorder:

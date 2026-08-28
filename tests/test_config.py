@@ -26,6 +26,16 @@ def test_new_chat_variables_take_precedence_over_legacy_variables(monkeypatch):
     )
 
 
+def test_storage_backend_defaults_to_databricks_when_unset(monkeypatch):
+    monkeypatch.delenv("RAG_STORAGE_BACKEND", raising=False)
+    for name, value in {"RAG_CATALOG": "catalog", "RAG_SCHEMA": "schema",
+                        "RAG_WAREHOUSE_ID": "warehouse"}.items(): monkeypatch.setenv(name, value)
+
+    settings = Settings.from_env()
+
+    assert settings.storage_backend == "databricks"
+
+
 def test_legacy_ollama_variables_remain_supported(monkeypatch):
     for name in ("RAG_CHAT_BASE_URL", "RAG_CHAT_MODEL", "RAG_CHAT_API_KEY"):
         monkeypatch.delenv(name, raising=False)

@@ -15,7 +15,7 @@ from rag.index.embeddings import OllamaEmbeddingProvider
 from rag.index.faiss_store import read_active_fingerprint
 from rag.index.runtime import ActiveSnapshotRetriever, app_snapshot_root
 from rag.llm.providers import OpenAICompatibleProvider
-from rag.store import DatabricksStore, VolumePublisher
+from rag.storage.databricks import DatabricksStore, VolumePublisher
 from rag.workflow import (
     build_snapshot,
     official_sources,

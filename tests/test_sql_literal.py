@@ -1,4 +1,4 @@
-from rag.store import sql_literal
+from rag.storage.databricks import sql_literal
 
 
 def test_apostrophes_are_backslash_escaped_not_doubled():

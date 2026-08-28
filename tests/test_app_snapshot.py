@@ -1,6 +1,6 @@
 import pytest
 
-from rag.store import DatabricksStore, SqlResult
+from rag.storage.databricks import DatabricksStore, SqlResult
 
 
 class Store:

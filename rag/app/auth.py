@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import os
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
-from databricks.sdk import WorkspaceClient
+if TYPE_CHECKING:
+    from databricks.sdk import WorkspaceClient
 
 _FORWARDED_TOKEN_HEADER = "x-forwarded-access-token"
 
@@ -14,6 +16,8 @@ class MissingForwardedTokenError(RuntimeError):
 
 
 def get_user_workspace_client(headers: Mapping[str, str]) -> WorkspaceClient:
+    from databricks.sdk import WorkspaceClient
+
     token = headers.get(_FORWARDED_TOKEN_HEADER)
     if not token:
         raise MissingForwardedTokenError("Databricks App user authorization is required.")

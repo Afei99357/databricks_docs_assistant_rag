@@ -15,7 +15,7 @@ from rag.identity import DatabricksAppIdentityProvider
 from rag.index.embeddings import DatabricksEmbeddingProvider
 from rag.index.runtime import VolumeSnapshotRetriever, app_snapshot_root
 from rag.llm.providers import DatabricksEndpointProvider
-from rag.store import DatabricksStore
+from rag.storage.databricks import DatabricksStore
 
 
 def create_databricks_app():
