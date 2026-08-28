@@ -40,4 +40,4 @@ resources:
               ResourceClass: SingleNode
               dev: ${workspace.current_user.short_name}
             data_security_mode: SINGLE_USER
-          timeout_seconds: 3600
+          timeout_seconds: 14400
