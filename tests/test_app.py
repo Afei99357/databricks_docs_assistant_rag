@@ -116,3 +116,15 @@ def test_unexpected_answer_error_is_json_not_an_html_error_page():
     response = app.test_client().post("/api/answer", json={"question": "test"})
     assert response.status_code == 500
     assert response.json == {"error": "The service could not process this request."}
+
+def test_missing_asset_keeps_its_404_instead_of_becoming_a_500():
+    """The catch-all Exception handler used to swallow routine HTTP errors."""
+    app = create_app(retrieve=lambda _: [], provider=Provider(), threshold=.3)
+    response = app.test_client().get("/static/does-not-exist.css")
+    assert response.status_code == 404
+
+
+def test_home_shell_does_not_reference_a_removed_stylesheet():
+    app = create_app(retrieve=lambda _: [], provider=Provider(), threshold=.3)
+    response = app.test_client().get("/")
+    assert b"static/app.css" not in response.data

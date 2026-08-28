@@ -8,6 +8,7 @@ from threading import Thread
 from time import perf_counter
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
+from werkzeug.exceptions import HTTPException
 
 from rag.conversation import resolve_follow_up
 from rag.llm.grounding import answer_groundedly_with_trace
@@ -89,6 +90,12 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         from rag.app.auth import MissingForwardedTokenError
         status = 401 if isinstance(error, MissingForwardedTokenError) else 500
         return jsonify({"error": str(error) or "The service could not process this request."}), status
+
+    @app.errorhandler(HTTPException)
+    def http_error(error):
+        # A missing page or asset is a routine answer, not a server fault, so it
+        # keeps its own status instead of being logged as an unexpected failure.
+        return jsonify({"error": error.description}), error.code
 
     @app.errorhandler(Exception)
     def unexpected_error(error):
