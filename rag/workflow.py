@@ -15,7 +15,7 @@ from rag.ingest.lifecycle import REMOVAL_THRESHOLD
 from rag.ingest.pipeline import ingest_source
 from rag.ingest.sources import CuratedDoc, discover_root, load_curated_docs, load_discovery_roots
 from rag.models import Chunk, Document
-from rag.store import DatabricksStore, sql_literal
+from rag.store import DatabricksStore
 
 
 @dataclass(frozen=True)
@@ -224,47 +224,6 @@ def build_snapshot(
     return build_and_activate(chunks, embedder, local_root, corpus_fingerprint=corpus_fingerprint)
 
 
-def load_current_chunks(
-    store: DatabricksStore, chunk_table: str, document_table: str | None = None
-) -> list[Chunk]:
-    """Load only chunks selected by the manifest's active document version."""
-    source = chunk_table
-    columns = "chunk_id,doc_id,document_version,position,chunk_text,heading_path,source_url,source_title"
-    order_by = "doc_id,document_version,position"
-    if document_table:
-        source = (
-            f"{chunk_table} c JOIN {document_table} d ON c.doc_id=d.doc_id "
-            "AND c.document_version=d.document_version WHERE d.status IN ('ok','pending_snapshot')"
-        )
-        columns = ",".join(f"c.{column}" for column in columns.split(","))
-        order_by = ",".join(f"c.{column}" for column in order_by.split(","))
-    rows = store.execute(
-        f"SELECT {columns} FROM {source} ORDER BY {order_by}"
-    ).rows
-
-    def heading_path(value) -> tuple[str, ...]:
-        return tuple(json.loads(value) if isinstance(value, str) else value or ())
-
-    chunks = [
-        Chunk(
-            str(row[0]),
-            str(row[1]),
-            str(row[2]),
-            int(row[3]),
-            str(row[4]),
-            heading_path(row[5]),
-            str(row[6]),
-            str(row[7]),
-        )
-        for row in rows
-    ]
-    if not chunks:
-        raise RuntimeError(
-            f"no chunks found in {chunk_table}; run the source refresh before building an index"
-        )
-    return chunks
-
-
 def publish_volume_snapshot(
     store: DatabricksStore,
     *,
@@ -289,14 +248,8 @@ def publish_volume_snapshot(
             f"{volume_path.rstrip('/')}/active_snapshot.json",
             overwrite=True,
         )
-        table = f"{namespace}.rag_index_snapshots"
-        store.execute(f"UPDATE {table} SET active=FALSE WHERE active=TRUE")
-        metadata = published.metadata
-        store.execute(
-            f"INSERT INTO {table} (snapshot_id,embedding_model,embedding_dimension,chunk_count,artifact_path,chunk_map_path,created_at,status,active,corpus_fingerprint) VALUES "
-            f"({sql_literal(metadata.snapshot_id)},{sql_literal(metadata.embedding_model)},{metadata.embedding_dimension},{metadata.chunk_count},"
-            f"{sql_literal(remote_dir + '/index.faiss')},{sql_literal(remote_dir + '/chunk_map.json')},current_timestamp(),'active',TRUE,{sql_literal(corpus_fingerprint)})"
-        )
+        metadata = replace(published.metadata, artifact_path=f"{remote_dir}/index.faiss")
+        store.activate_snapshot(metadata)
         if document_table:
             store.mark_documents_materialized(document_table, chunk_table=f"{namespace}.rag_chunks")
         return published

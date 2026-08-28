@@ -9,7 +9,7 @@ from rag.config import Settings
 from rag.index.embeddings import DatabricksEmbeddingProvider
 from rag.index.runtime import app_snapshot_root
 from rag.store import DatabricksStore
-from rag.workflow import load_current_chunks, publish_volume_snapshot, refresh_sources
+from rag.workflow import publish_volume_snapshot, refresh_sources
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,7 +40,7 @@ def main() -> None:
         RAG_DATABRICKS_EMBEDDING_ENDPOINT=args.embedding_endpoint,
     )
     settings = Settings.from_env()
-    store = DatabricksStore(settings.warehouse_id)
+    store = DatabricksStore(settings.warehouse_id, namespace=settings.namespace)
     store.apply_schema(
         args.schema_sql_path,
         catalog=settings.catalog,
@@ -70,9 +70,7 @@ def main() -> None:
             flush=True,
         )
         return
-    chunks = load_current_chunks(
-        store, f"{settings.namespace}.rag_chunks", f"{settings.namespace}.rag_documents"
-    )
+    chunks = store.current_chunks()
     print(f"publishing App snapshot from {len(chunks)} chunks...", flush=True)
     embedder = DatabricksEmbeddingProvider(
         args.embedding_endpoint,

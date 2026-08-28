@@ -18,7 +18,6 @@ from rag.llm.providers import OpenAICompatibleProvider
 from rag.store import DatabricksFeedbackSink, DatabricksRequestTraceSink, DatabricksStore
 from rag.workflow import (
     build_snapshot,
-    load_current_chunks,
     official_sources,
     publish_volume_snapshot,
     refresh_sources,
@@ -132,7 +131,9 @@ def build_app_snapshot() -> None:
     settings = Settings.from_env()
     from rag.index.embeddings import DatabricksEmbeddingProvider
 
-    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
+    store = DatabricksStore(
+        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace
+    )
     embedder = DatabricksEmbeddingProvider(
         os.getenv("RAG_DATABRICKS_EMBEDDING_ENDPOINT", "databricks-qwen3-embedding-0-6b"),
         profile=settings.databricks_profile,
@@ -146,9 +147,7 @@ def build_app_snapshot() -> None:
     if store.active_snapshot_fingerprint(snapshot_table) == refreshed.corpus_fingerprint:
         print("App snapshot already matches the refreshed corpus; skipping embedding build.")
         return
-    chunks = load_current_chunks(
-        store, f"{settings.namespace}.rag_chunks", f"{settings.namespace}.rag_documents"
-    )
+    chunks = store.current_chunks()
     app_index_root = app_snapshot_root(settings.volume_path)
     published = publish_volume_snapshot(
         store,
@@ -175,16 +174,16 @@ def build_local_snapshot(*, force: bool = False) -> None:
     root = os.getenv("RAG_LOCAL_INDEX_DIR")
     if not root:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to the local snapshot directory")
-    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
+    store = DatabricksStore(
+        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace
+    )
     print("refreshing configured sources and chunks...", flush=True)
     refreshed = refresh_sources(
         store,
         document_table=f"{settings.namespace}.rag_documents",
         chunk_table=f"{settings.namespace}.rag_chunks",
     )
-    chunks = load_current_chunks(
-        store, f"{settings.namespace}.rag_chunks", f"{settings.namespace}.rag_documents"
-    )
+    chunks = store.current_chunks()
     if not force and read_active_fingerprint(root) == refreshed.corpus_fingerprint:
         print("local snapshot already matches the refreshed corpus; skipping embedding build.")
         return

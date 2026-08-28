@@ -63,9 +63,9 @@ def _install_stubs(monkeypatch, cli, *, fingerprint):
     monkeypatch.setattr(
         cli, "refresh_sources", lambda *a, **k: type("R", (), {"corpus_fingerprint": fingerprint})()
     )
-    monkeypatch.setattr(cli, "load_current_chunks", lambda *a, **k: ["chunk"])
     monkeypatch.setattr(cli, "OllamaEmbeddingProvider", lambda *a, **k: object())
 
 
 class _Store:
+    def current_chunks(self): return ["chunk"]
     def mark_documents_materialized(self, *a, **k): pass

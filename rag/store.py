@@ -207,6 +207,65 @@ class DatabricksStore:
         )
         return turn_id
 
+    def current_chunks(self) -> list[Chunk]:
+        """Chunks belonging to the version of each document that is indexed."""
+        rows = self.execute(
+            "SELECT c.chunk_id,c.doc_id,c.document_version,c.position,c.chunk_text,"
+            "c.heading_path,c.source_url,c.source_title "
+            f"FROM {self.namespace}.rag_chunks c "
+            f"JOIN {self.namespace}.rag_documents d ON c.doc_id=d.doc_id "
+            "AND c.document_version=d.document_version "
+            "WHERE d.status IN ('ok','pending_snapshot') "
+            "ORDER BY c.doc_id,c.document_version,c.position"
+        ).rows
+
+        def heading_path(value) -> tuple[str, ...]:
+            return tuple(json.loads(value) if isinstance(value, str) else value or ())
+
+        chunks = [
+            Chunk(
+                str(row[0]),
+                str(row[1]),
+                str(row[2]),
+                int(row[3]),
+                str(row[4]),
+                heading_path(row[5]),
+                str(row[6]),
+                str(row[7]),
+            )
+            for row in rows
+        ]
+        if not chunks:
+            raise RuntimeError(
+                f"no chunks found in {self.namespace}.rag_chunks; "
+                "run the source refresh before building an index"
+            )
+        return chunks
+
+    def activate_snapshot(self, metadata) -> None:
+        """Deactivate the previous snapshot, then record the new one as active."""
+        self.execute(
+            f"UPDATE {self.namespace}.rag_index_snapshots SET active=FALSE WHERE active=TRUE"
+        )
+        chunk_map_path = metadata.artifact_path.rsplit("/", 1)[0] + "/chunk_map.json"
+        self.execute(
+            f"INSERT INTO {self.namespace}.rag_index_snapshots "
+            "(snapshot_id,embedding_model,embedding_dimension,chunk_count,artifact_path,"
+            "chunk_map_path,status,active,corpus_fingerprint,created_at) VALUES "
+            "(:snapshot_id,:embedding_model,:embedding_dimension,:chunk_count,:artifact_path,"
+            ":chunk_map_path,:status,TRUE,:corpus_fingerprint,current_timestamp())",
+            parameters={
+                "snapshot_id": metadata.snapshot_id,
+                "embedding_model": metadata.embedding_model,
+                "embedding_dimension": metadata.embedding_dimension,
+                "chunk_count": metadata.chunk_count,
+                "artifact_path": metadata.artifact_path,
+                "chunk_map_path": chunk_map_path,
+                "status": metadata.status,
+                "corpus_fingerprint": metadata.corpus_fingerprint,
+            },
+        )
+
     def upload(self, local_path: str | Path, volume_path: str, *, overwrite: bool = False) -> None:
         with Path(local_path).open("rb") as handle:
             self.workspace.files.upload(volume_path, handle, overwrite=overwrite)
