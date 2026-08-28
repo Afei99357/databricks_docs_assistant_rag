@@ -390,25 +390,38 @@ embedding specification changed.
 
 #### Resume an interrupted App snapshot
 
+If this branch's Job code has not been deployed yet, deploy it once:
+
 ```bash
 just bootstrap-deploy
+```
+
+Then resume the interrupted snapshot operation:
+
+```bash
 just bootstrap-resume-snapshot
 ```
 
-Deploys the current Job code, then runs it with `resume_snapshot=true`. The Workflow skips source
-fetching and parsing, uses the persisted Delta chunks, embeds only missing vectors, and activates
-the new App snapshot.
+This runs with `resume_snapshot=true`. The Workflow skips source fetching and parsing, uses the
+persisted Delta chunks, embeds only missing vectors, and activates the new App snapshot.
 
 #### Rebuild the App FAISS snapshot from cached vectors
 
+If this branch's Job code has not been deployed yet, deploy it once:
+
 ```bash
 just bootstrap-deploy
+```
+
+Then rebuild only the FAISS artifact:
+
+```bash
 just bootstrap-rebuild-index
 ```
 
-Deploys the current Job code, then runs it with `rebuild_snapshot=true`. The Workflow skips source
-fetching, parsing, and embedding; it rebuilds the Databricks-embedding FAISS snapshot only when
-all compatible vectors are already present. If vectors are missing, run
+This runs with `rebuild_snapshot=true`. The Workflow skips source fetching, parsing, and
+embedding; it rebuilds the Databricks-embedding FAISS snapshot only when all compatible vectors
+are already present. If vectors are missing, run
 `just bootstrap-resume-snapshot` first.
 
 #### Fully re-chunk and re-index the App corpus
@@ -416,8 +429,15 @@ all compatible vectors are already present. If vectors are missing, run
 Use this after a chunking/storage upgrade, a chunking repair, or when the existing governed
 chunks cannot be trusted:
 
+If this branch's Job code has not been deployed yet, deploy it once:
+
 ```bash
 just bootstrap-deploy
+```
+
+Then run the repair:
+
+```bash
 just bootstrap-repair
 ```
 
