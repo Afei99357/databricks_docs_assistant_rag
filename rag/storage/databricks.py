@@ -209,7 +209,7 @@ class DatabricksStore:
             "supported,provider,model,snapshot_id,citation_chunk_ids,created_at,latency_ms) "
             "VALUES (:turn_id,:conversation_id,:number,:question,:resolved_query,:answer_text,"
             ":supported,:provider,NULL,:snapshot_id,"
-            "from_json(:citation_ids,'array<string>'),current_timestamp(),:latency_ms)",
+            "from_json(:citation_ids,'array<string>'),current_timestamp(),CAST(:latency_ms AS BIGINT))",
             parameters={
                 "turn_id": turn_id,
                 "conversation_id": conversation_id,
@@ -389,7 +389,7 @@ class DatabricksStore:
                 rows.append(
                     f"(:{n}_id,:{n}_doc,:{n}_ver,:{n}_pos,:{n}_text,"
                     f"from_json(:{n}_path,'array<string>'),:{n}_url,:{n}_title,"
-                    f":{n}_model,:{n}_dim,current_timestamp())"
+                    f":{n}_model,CAST(:{n}_dim AS INT),current_timestamp())"
                 )
                 parameters |= {
                     f"{n}_id": chunk.chunk_id,
@@ -506,7 +506,7 @@ class DatabricksStore:
             "from_json(:retrieval_queries,'array<string>'),:retrieval_status,"
             ":selected_evidence_json,:raw_model_output,"
             "from_json(:parsed_citation_labels,'array<string>'),:fallback_reason,"
-            ":final_answer_text,:supported,:provider,:model,:snapshot_id,:latency_ms,"
+            ":final_answer_text,:supported,:provider,:model,:snapshot_id,CAST(:latency_ms AS BIGINT),"
             "current_timestamp())",
             parameters={
                 "trace_id": trace_id,
@@ -554,7 +554,7 @@ class DatabricksStore:
                     "(:trace_id,:turn_id,:search_number,:search_query,"
                     "from_json(:retrieved_chunk_ids,'array<string>'),"
                     "from_json(:selected_chunk_ids,'array<string>'),:agent_decision,"
-                    "current_timestamp(),:latency_ms)",
+                    "current_timestamp(),CAST(:latency_ms AS BIGINT))",
                     parameters={
                         "trace_id": trace_id,
                         "turn_id": turn_id,
@@ -574,7 +574,7 @@ class DatabricksStore:
             "(feedback_id,question,submitted_at,provider,model,snapshot_id,"
             "retrieved_chunk_ids,latency_ms,rating,comment) VALUES "
             "(:feedback_id,:question,current_timestamp(),:provider,:model,:snapshot_id,"
-            "from_json(:retrieved_chunk_ids,'array<string>'),:latency_ms,:rating,:comment)",
+            "from_json(:retrieved_chunk_ids,'array<string>'),CAST(:latency_ms AS BIGINT),:rating,:comment)",
             parameters={
                 "feedback_id": uuid4().hex,
                 "question": payload.get("question", ""),
@@ -609,9 +609,8 @@ class VolumePublisher:
         self.store.upload(local_directory / "index.faiss", f"{remote_dir}/index.faiss")
         self.store.upload(local_directory / "chunk_map.json", f"{remote_dir}/chunk_map.json")
         manifest = local_directory.parent.parent / "active_snapshot.json"
-        if manifest.exists():
-            self.store.upload(
-                manifest, f"{self.volume_path.rstrip('/')}/active_snapshot.json", overwrite=True
-            )
+        self.store.upload(
+            manifest, f"{self.volume_path.rstrip('/')}/active_snapshot.json", overwrite=True
+        )
         return remote_dir
 

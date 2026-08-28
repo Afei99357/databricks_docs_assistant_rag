@@ -66,18 +66,3 @@ def test_volume_publisher_republishes_the_active_snapshot_manifest_when_present(
         if volume_path == "/Volumes/cat/sch/vol/active_snapshot.json"
     ]
     assert manifest_uploads == [(build_root / "active_snapshot.json", True)]
-
-
-def test_volume_publisher_skips_the_manifest_upload_when_it_does_not_exist(tmp_path):
-    local_directory = tmp_path / "snapshots" / "snap-1"
-    local_directory.mkdir(parents=True)
-    (local_directory / "index.faiss").write_bytes(b"idx")
-    (local_directory / "chunk_map.json").write_text("[]", encoding="utf-8")
-
-    uploader = FakeUploader()
-    VolumePublisher(uploader, "/Volumes/cat/sch/vol").publish(local_directory, "snap-1")
-
-    assert all(
-        volume_path != "/Volumes/cat/sch/vol/active_snapshot.json"
-        for _, volume_path, _ in uploader.calls
-    )
