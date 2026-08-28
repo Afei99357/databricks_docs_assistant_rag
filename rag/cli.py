@@ -154,7 +154,7 @@ def build_app_snapshot() -> None:
     )
 
 
-def build_local_snapshot(*, force: bool = False) -> None:
+def build_local_snapshot(*, force: bool = False, refresh: bool = True, embed_missing: bool = True) -> None:
     """Refresh governed chunks and build a local Ollama-backed FAISS snapshot.
 
     ``force`` rebuilds even when the corpus fingerprint is unchanged, which is
@@ -168,10 +168,16 @@ def build_local_snapshot(*, force: bool = False) -> None:
     from rag.storage import create_store
 
     store = create_store(settings)
-    print("refreshing configured sources and chunks...", flush=True)
-    refreshed = refresh_sources(store, chunking_revision=settings.chunking_revision)
+    if refresh:
+        print("refreshing configured sources and chunks...", flush=True)
+        refreshed = refresh_sources(store, chunking_revision=settings.chunking_revision)
+        corpus_fingerprint = refreshed.corpus_fingerprint
+    else:
+        print("using persisted chunks; skipping source refresh...", flush=True)
+        chunks = store.current_chunks()
+        corpus_fingerprint = store.active_snapshot_fingerprint()
     chunks = store.current_chunks()
-    if not force and active_manifest_matches(
+    if refresh and not force and active_manifest_matches(
         root,
         corpus_fingerprint=refreshed.corpus_fingerprint,
         embedding_model=settings.embedding_model,
@@ -196,6 +202,10 @@ def build_local_snapshot(*, force: bool = False) -> None:
         flush=True,
     )
     if missing:
+        if not embed_missing:
+            raise RuntimeError(
+                f"{len(missing)} embeddings are missing; run 'just resume-snapshot' first"
+            )
         vectors = embedder.embed([chunk.text for chunk in missing])
         store.save_embeddings(
             [
@@ -213,7 +223,7 @@ def build_local_snapshot(*, force: bool = False) -> None:
         [item.vector for item in embeddings],
         embedder,
         root,
-        corpus_fingerprint=refreshed.corpus_fingerprint,
+        corpus_fingerprint=corpus_fingerprint,
         embedding_revision=settings.embedding_revision,
         chunking_revision=settings.chunking_revision,
     )
@@ -236,7 +246,12 @@ def repair_chunks() -> None:
     store = create_store(settings)
     affected = store.clear_indexed_content_hashes()
     print(f"cleared the indexed content hash for {affected} documents; every one will re-chunk.")
-    build_local_snapshot(force=True)
+    build_local_snapshot(force=True, refresh=True)
+
+
+def resume_snapshot() -> None:
+    """Embed missing vectors and publish from persisted chunks without refreshing sources."""
+    build_local_snapshot(refresh=False, embed_missing=True)
 
 
 def main() -> None:
@@ -245,6 +260,7 @@ def main() -> None:
     commands.add_parser("discover", help="fetch and list official source URLs")
     commands.add_parser("setup-db", help="create configured Delta tables and artifact Volume")
     commands.add_parser("serve", help="serve the active local snapshot through Flask")
+    commands.add_parser("resume-snapshot", help="embed missing vectors and publish from stored chunks")
     evaluation = commands.add_parser(
         "evaluate", help="run the question battery and report retrieval quality"
     )
@@ -273,6 +289,7 @@ def main() -> None:
         "discover": discover,
         "setup-db": setup_db,
         "serve": serve,
+        "resume-snapshot": resume_snapshot,
         "build-app-snapshot": build_app_snapshot,
         "build-local-snapshot": build_local_snapshot,
         "repair-chunks": repair_chunks,

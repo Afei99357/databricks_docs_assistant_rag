@@ -7,6 +7,10 @@ resources:
       parameters:
         - name: repair_chunks
           default: "false"
+        - name: resume_snapshot
+          default: "false"
+        - name: rebuild_snapshot
+          default: "false"
       tasks:
         - task_key: refresh_and_publish
           python_wheel_task:
@@ -27,6 +31,10 @@ resources:
               - ${workspace.file_path}/sql/001_rag_schema.sql
               - --repair-chunks
               - "{{job.parameters.repair_chunks}}"
+              - --resume-snapshot
+              - "{{job.parameters.resume_snapshot}}"
+              - --rebuild-snapshot
+              - "{{job.parameters.rebuild_snapshot}}"
           libraries:
             - whl: ../dist/*.whl
           new_cluster:

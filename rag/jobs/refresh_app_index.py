@@ -35,6 +35,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "Accepts true/false (the job's repair_chunks parameter substitutes a string here); "
         "omitting the flag entirely also defaults to false.",
     )
+    parser.add_argument(
+        "--resume-snapshot",
+        type=_parse_bool,
+        default=False,
+        help="skip source refresh and publish from the persisted current chunks",
+    )
+    parser.add_argument(
+        "--rebuild-snapshot",
+        type=_parse_bool,
+        default=False,
+        help="skip source refresh and embedding; rebuild from fully cached vectors",
+    )
     return parser.parse_args(argv)
 
 
@@ -55,6 +67,8 @@ def main() -> None:
         schema=settings.schema,
         artifact_volume=settings.artifact_volume,
     )
+    if sum((args.repair_chunks, args.resume_snapshot, args.rebuild_snapshot)) > 1:
+        raise ValueError("repair, resume, and rebuild snapshot modes cannot be combined")
     if args.repair_chunks:
         affected = store.clear_indexed_content_hashes()
         print(
@@ -62,11 +76,18 @@ def main() -> None:
             "every one will re-chunk.",
             flush=True,
         )
-    print("refreshing configured documentation sources...", flush=True)
-    refreshed = refresh_sources(store, chunking_revision=os.getenv("RAG_CHUNKING_REVISION", "v1"))
+    if args.resume_snapshot or args.rebuild_snapshot:
+        print("using persisted chunks; skipping source refresh...", flush=True)
+        corpus_fingerprint = store.active_snapshot_fingerprint()
+    else:
+        print("refreshing configured documentation sources...", flush=True)
+        refreshed = refresh_sources(store, chunking_revision=os.getenv("RAG_CHUNKING_REVISION", "v1"))
+        corpus_fingerprint = refreshed.corpus_fingerprint
     if (
         not args.repair_chunks
-        and store.active_snapshot_fingerprint() == refreshed.corpus_fingerprint
+        and not args.resume_snapshot
+        and not args.rebuild_snapshot
+        and store.active_snapshot_fingerprint() == corpus_fingerprint
     ):
         print(
             "App snapshot already matches the refreshed corpus; skipping embedding build.",
@@ -85,8 +106,9 @@ def main() -> None:
         publisher=VolumePublisher(store, app_snapshot_root(settings.volume_path)),
         chunks=chunks,
         embedder=embedder,
-        corpus_fingerprint=refreshed.corpus_fingerprint,
+        corpus_fingerprint=corpus_fingerprint,
         materialize=True,
+        embed_missing=not args.rebuild_snapshot,
     )
     print(
         f"published App snapshot {published.metadata.snapshot_id} "

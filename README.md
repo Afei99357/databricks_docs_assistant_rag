@@ -205,6 +205,16 @@ In Databricks-backed mode, both local and App snapshots read the same Delta tabl
 repair fixes stored text for both; each snapshot must still be rebuilt with its own embedding
 model. SQLite mode has an independent local corpus and snapshot.
 
+#### Resume an interrupted local snapshot
+
+```bash
+just resume-snapshot
+```
+
+Uses the persisted chunks without fetching or parsing sources, embeds only missing vectors, and
+publishes a new local snapshot. Use this after a refresh was interrupted during embedding or
+snapshot construction.
+
 #### Rebuild FAISS from cached vectors
 
 ```bash
@@ -213,7 +223,7 @@ just rebuild-index
 
 Rebuilds the local FAISS snapshot from persisted vectors even when the corpus fingerprint is
 unchanged. It does not fetch, re-chunk, or re-embed content; use it only when local FAISS
-artifacts need replacement.
+artifacts need replacement. It fails if any compatible vectors are missing.
 
 The local server does not use the Databricks App service principal, OBO identity, or hosted
 model endpoints.
@@ -368,6 +378,9 @@ conversation owner. The deployed App does not read your local `.env` file.
 
 ### 5. Refresh or redeploy later
 
+Run `just bootstrap-deploy` only after changing the bootstrap Job code, Job parameters, schema,
+or bundle configuration. Otherwise, the commands below run the already deployed Workflow.
+
 #### Refresh changed documentation
 
 ```bash
@@ -378,13 +391,32 @@ Runs the Databricks refresh Workflow against the configured source roots. It re-
 documents, embeds only missing vectors, and publishes a new App snapshot only when the corpus or
 embedding specification changed.
 
+#### Resume an interrupted App snapshot
+
+```bash
+just bootstrap-resume-snapshot
+```
+
+This runs with `resume_snapshot=true`. The Workflow skips source fetching and parsing, uses the
+persisted Delta chunks, embeds only missing vectors, and activates the new App snapshot.
+
+#### Rebuild the App FAISS snapshot from cached vectors
+
+```bash
+just bootstrap-rebuild-index
+```
+
+This runs with `rebuild_snapshot=true`. The Workflow skips source fetching, parsing, and
+embedding; it rebuilds the Databricks-embedding FAISS snapshot only when all compatible vectors
+are already present. If vectors are missing, run
+`just bootstrap-resume-snapshot` first.
+
 #### Fully re-chunk and re-index the App corpus
 
 Use this after a chunking/storage upgrade, a chunking repair, or when the existing governed
 chunks cannot be trusted:
 
 ```bash
-just bootstrap-deploy
 just bootstrap-repair
 ```
 

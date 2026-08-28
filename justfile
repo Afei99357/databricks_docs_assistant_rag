@@ -59,7 +59,11 @@ index:
 
 # Rebuild the local FAISS snapshot from persisted vectors without changing chunks.
 rebuild-index:
-    uv run python -c "from rag.cli import build_local_snapshot; build_local_snapshot(force=True)"
+    uv run python -c "from rag.cli import build_local_snapshot; build_local_snapshot(refresh=False, embed_missing=False)"
+
+# Resume embedding and snapshot publication from persisted chunks without refreshing sources.
+resume-snapshot:
+    uv run python -m rag.cli resume-snapshot
 
 # Repair stored chunks: re-chunk everything, ignoring change detection.
 repair-chunks:
@@ -107,6 +111,16 @@ bootstrap-run:
 bootstrap-repair:
     cd bootstrap && databricks bundle run refresh_databricks_docs_index --target dev \
         --profile "$RAG_DATABRICKS_PROFILE" {{_bundle_vars}} --params repair_chunks=true
+
+# Resume embedding and snapshot publication from persisted Delta chunks.
+bootstrap-resume-snapshot:
+    cd bootstrap && databricks bundle run refresh_databricks_docs_index --target dev \
+        --profile "$RAG_DATABRICKS_PROFILE" {{_bundle_vars}} --params resume_snapshot=true
+
+# Rebuild the Databricks FAISS snapshot from fully cached vectors without embedding.
+bootstrap-rebuild-index:
+    cd bootstrap && databricks bundle run refresh_databricks_docs_index --target dev \
+        --profile "$RAG_DATABRICKS_PROFILE" {{_bundle_vars}} --params rebuild_snapshot=true
 
 # Deploy the App Bundle's resource configuration. Run `just frontend` first.
 app-deploy:
