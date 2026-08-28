@@ -99,6 +99,18 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
    just serve
    ```
 
+While developing, `just check` runs what CI runs — `ruff` followed by the test suite. Its two
+halves are also available on their own, and `just test` forwards any arguments to `pytest`:
+
+```bash
+just check              # lint and tests, as CI would
+just lint
+just test tests/test_sources.py
+```
+
+`just discover` fetches and lists the official source URLs without ingesting them, which is the
+cheap way to see what the configured roots and supplements currently resolve to.
+
 Run `just index` whenever you want to refresh documentation. It checks configured discovery
 roots recursively (bounded to 250 pages per root) plus the manual supplements in
 `rag/ingest/config/curated_urls.yaml`. It only rewrites changed document chunks. A local FAISS
@@ -304,10 +316,13 @@ while the user token is used only to resolve the signed-in Databricks user.
   set; model size is not a quality decision.
 - A snapshot is built in staging, validated against its chunk map, then activated atomically.
   Failed builds leave the current active snapshot unchanged.
-- The UI refuses answers below the relevance threshold or without model citations. It stores
-  feedback/retrieval diagnostics, not generated answer text.
+- The UI refuses answers below the relevance threshold or without model citations.
+- Conversation turns and request traces store the generated answer text, so
+  `rag_conversation_turns.answer_text` and `rag_request_traces.final_answer_text` are readable
+  by anyone with SELECT on those tables. The feedback sink is the exception: it records only
+  request/retrieval diagnostics and the user's rating.
 - Costs remain visible: local GPU embedding is explicit, and Delta/Volume, SQL Warehouse, and
   optional Databricks endpoint usage are separately attributable.
 
 See [`scripts/README.md`](scripts/README.md) for manual operating commands and
-[`tests/evaluation_cases.yaml`](tests/evaluation_cases.yaml) for the initial benchmark.
+[`rag/evaluation_cases.yaml`](rag/evaluation_cases.yaml) for the benchmark questions.
