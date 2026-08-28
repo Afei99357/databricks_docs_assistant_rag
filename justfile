@@ -52,6 +52,10 @@ setup-db:
 index:
     uv run python -m rag.cli build-local-snapshot
 
+# Repair stored chunks: re-chunk everything, ignoring change detection.
+repair-chunks:
+    uv run python -m rag.cli repair-chunks
+
 # Serve the active local snapshot on http://127.0.0.1:8000.
 serve:
     uv run python -m rag.cli serve

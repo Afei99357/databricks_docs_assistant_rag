@@ -111,6 +111,25 @@ just test tests/test_sources.py
 `just discover` fetches and lists the official source URLs without ingesting them, which is the
 cheap way to see what the configured roots and supplements currently resolve to.
 
+### Repairing stored chunks
+
+A refresh rewrites a document's chunks only when the fetched page differs from what was last
+indexed. That is the right default, but it means stored chunks that are wrong for a reason
+unrelated to the source — a write-side defect, a change to the chunker — are skipped forever,
+because the page itself has not moved.
+
+```bash
+just repair-chunks
+```
+
+This clears the recorded content hash so every document re-chunks, then rebuilds the local
+snapshot even though the corpus fingerprint is unchanged. It costs a full re-embed, so it is
+a deliberate repair rather than part of a routine refresh. The Databricks side takes the same
+repair through its Workflow: run `refresh_app_index.py` with `--repair-chunks`.
+
+Both apps read chunks from the same Delta tables, so one repair fixes the stored text for both,
+but each snapshot must then be rebuilt with its own embedding model.
+
 Run `just index` whenever you want to refresh documentation. It checks configured discovery
 roots recursively (bounded to 250 pages per root) plus the manual supplements in
 `rag/ingest/config/curated_urls.yaml`. It only rewrites changed document chunks. A local FAISS
