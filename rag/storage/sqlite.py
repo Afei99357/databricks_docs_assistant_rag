@@ -224,6 +224,8 @@ class SQLiteStore:
         return [chunk for chunk in chunks if chunk.chunk_id not in present]
 
     def save_embeddings(self, embeddings: list[StoredEmbedding]):
+        if embeddings:
+            print(f"saving {len(embeddings)} embedding vectors to SQLite...", flush=True)
         self._connect().executemany(
             "INSERT OR REPLACE INTO rag_chunk_embeddings (chunk_id,embedding_model,embedding_revision,embedding_dimension,vector,created_at) VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)",
             [
@@ -237,6 +239,8 @@ class SQLiteStore:
                 for item in embeddings
             ],
         )
+        if embeddings:
+            print(f"saved {len(embeddings)}/{len(embeddings)} embedding vectors to SQLite...", flush=True)
 
     def embeddings_for(self, chunks, spec: EmbeddingSpec):
         if not chunks:

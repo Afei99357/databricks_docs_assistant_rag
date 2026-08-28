@@ -217,7 +217,9 @@ def build_local_snapshot(*, force: bool = False, refresh: bool = True, embed_mis
                 for chunk, vector in zip(missing, vectors)
             ]
         )
+    print("loading persisted embedding vectors...", flush=True)
     embeddings = store.embeddings_for(chunks, spec)
+    print("building local FAISS snapshot...", flush=True)
     published = build_snapshot_from_vectors(
         chunks,
         [item.vector for item in embeddings],
@@ -227,6 +229,7 @@ def build_local_snapshot(*, force: bool = False, refresh: bool = True, embed_mis
         embedding_revision=settings.embedding_revision,
         chunking_revision=settings.chunking_revision,
     )
+    print("activating local snapshot...", flush=True)
     store.mark_documents_materialized()
     print(
         f"published local snapshot {published.metadata.snapshot_id} "
