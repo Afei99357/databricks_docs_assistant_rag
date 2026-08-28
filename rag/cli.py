@@ -15,7 +15,7 @@ from rag.index.embeddings import OllamaEmbeddingProvider
 from rag.index.faiss_store import read_active_fingerprint
 from rag.index.runtime import ActiveSnapshotRetriever, app_snapshot_root
 from rag.llm.providers import OpenAICompatibleProvider
-from rag.store import DatabricksFeedbackSink, DatabricksRequestTraceSink, DatabricksStore
+from rag.store import DatabricksStore
 from rag.workflow import (
     build_snapshot,
     official_sources,
@@ -98,9 +98,6 @@ def serve() -> None:
     from rag.app.web import create_app
 
     store = DatabricksStore(settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace)
-    feedback = DatabricksFeedbackSink(
-        store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model
-    )
     agent = RetrievalAgent(
         retriever, agent_provider, candidates_per_search=settings.agent_candidates_per_search
     )
@@ -109,20 +106,11 @@ def serve() -> None:
         retrieve=agent.retrieve,
         provider=provider,
         threshold=settings.relevance_threshold,
-        feedback_sink=feedback,
         history=store,
         identity=identity,
+        diagnostics=store,
         trace_getter=lambda: agent.last_trace,
         progress_retrieve=agent.retrieve,
-        trace_sink=DatabricksRequestTraceSink(
-            store,
-            f"{settings.namespace}.rag_request_traces",
-            provider=provider.name,
-            model=provider.model,
-            retrieval_table=f"{settings.namespace}.rag_retrieval_traces",
-            agent_provider=agent_provider.name,
-            agent_model=agent_provider.model,
-        ),
     ).run(host="127.0.0.1", port=int(os.getenv("PORT", "8000")), debug=False)
 
 

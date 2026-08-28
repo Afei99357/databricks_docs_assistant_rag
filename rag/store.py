@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import asdict, dataclass, is_dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -109,6 +108,10 @@ class DatabricksStore:
         )
         self._add_missing_columns(
             f"{catalog}.{schema}.rag_index_snapshots", {"corpus_fingerprint": "STRING"}
+        )
+        self._add_missing_columns(
+            f"{catalog}.{schema}.rag_feedback",
+            {"turn_id": "STRING", "owner_user_id": "STRING"},
         )
 
     def _add_missing_columns(self, table: str, columns: dict[str, str]) -> None:
@@ -433,67 +436,7 @@ class DatabricksStore:
                 f"(SELECT doc_id FROM {table} WHERE status='removed')"
             )
 
-
-def sql_literal(value: object) -> str:
-    if value is None:
-        return "NULL"
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, (int, float)):
-        return str(value)
-    # Databricks SQL escapes with backslashes, not SQL-standard quote doubling:
-    # a doubled '' is silently dropped, deleting every apostrophe in the value.
-    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
-
-
-class DatabricksFeedbackSink:
-    """Stores only request/retrieval diagnostics and user feedback, never answer text."""
-
-    def __init__(self, store: DatabricksStore, table: str, *, provider: str, model: str):
-        self.store, self.table, self.provider, self.model = store, table, provider, model
-
-    def __call__(self, payload: dict) -> None:
-        columns = {
-            "feedback_id": uuid4().hex,
-            "question": payload.get("question", ""),
-            "submitted_at": datetime.now(timezone.utc).isoformat(),
-            "provider": self.provider,
-            "model": self.model,
-            "snapshot_id": payload.get("snapshot_id", "unknown"),
-            "retrieved_chunk_ids": "array("
-            + ",".join(sql_literal(value) for value in payload.get("retrieved_chunk_ids", []))
-            + ")",
-            "latency_ms": payload.get("latency_ms"),
-            "rating": payload["rating"],
-            "comment": payload.get("comment") or None,
-        }
-        values = ", ".join(
-            value if key == "retrieved_chunk_ids" else sql_literal(value)
-            for key, value in columns.items()
-        )
-        self.store.execute(f"INSERT INTO {self.table} ({', '.join(columns)}) VALUES ({values})")
-
-
-class DatabricksRequestTraceSink:
-    """Persist final-answer diagnostics without storing the full model prompt."""
-
-    def __init__(
-        self,
-        store: DatabricksStore,
-        table: str,
-        *,
-        provider: str,
-        model: str,
-        retrieval_table: str | None = None,
-        agent_provider: str | None = None,
-        agent_model: str | None = None,
-    ):
-        self.store, self.table, self.provider, self.model = store, table, provider, model
-        self.retrieval_table = retrieval_table
-        self.agent_provider = agent_provider or provider
-        self.agent_model = agent_model or model
-
-    def record(
+    def record_request_trace(
         self,
         *,
         turn_id: str | None,
@@ -508,6 +451,7 @@ class DatabricksRequestTraceSink:
         latency_ms: int,
         llm_usage=(),
     ) -> None:
+        """Persist final-answer diagnostics without storing the full model prompt."""
         evidence = [
             {
                 "chunk_id": item.chunk.chunk_id,
@@ -534,70 +478,125 @@ class DatabricksRequestTraceSink:
             }
             for step in tuple(getattr(retrieval_trace, "steps", ()) or ())
         ]
-        values = {
-            "trace_id": uuid4().hex,
-            "turn_id": turn_id,
-            "conversation_id": conversation_id,
-            "owner_user_id": owner,
-            "user_question": question,
-            "resolved_query": resolved_query,
-            "retrieval_queries": "array(" + ",".join(sql_literal(value) for value in queries) + ")",
-            "retrieval_status": getattr(retrieval_trace, "status", "unavailable"),
-            "selected_evidence_json": json.dumps(
-                {
-                    "selected_chunk_ids": selected,
-                    "evidence": evidence,
-                    "tool_steps": steps,
-                    "stop_reason": getattr(retrieval_trace, "stop_reason", None),
-                    "agent_provider": self.agent_provider,
-                    "agent_model": self.agent_model,
-                    "evidence_support": getattr(retrieval_trace, "evidence_support", ()),
-                    "unverified_points": getattr(retrieval_trace, "unverified_points", ()),
-                    "llm_calls": [
-                        asdict(call) if is_dataclass(call) else call for call in llm_usage
-                    ],
-                }
-            ),
-            "raw_model_output": grounding_trace.raw_model_output,
-            "parsed_citation_labels": "array("
-            + ",".join(sql_literal(value) for value in grounding_trace.parsed_citation_labels)
-            + ")",
-            "fallback_reason": grounding_trace.fallback_reason,
-            "final_answer_text": answer.text,
-            "supported": answer.supported,
-            "provider": self.provider,
-            "model": self.model,
-            "snapshot_id": answer.snapshot_id,
-            "latency_ms": latency_ms,
-            "created_at": "current_timestamp()",
-        }
-        raw = {"retrieval_queries", "parsed_citation_labels", "created_at"}
-        rendered = ", ".join(
-            value if key in raw else sql_literal(value) for key, value in values.items()
+        trace_id = uuid4().hex
+        self.execute(
+            f"INSERT INTO {self.namespace}.rag_request_traces "
+            "(trace_id,turn_id,conversation_id,owner_user_id,user_question,resolved_query,"
+            "retrieval_queries,retrieval_status,selected_evidence_json,raw_model_output,"
+            "parsed_citation_labels,fallback_reason,final_answer_text,supported,provider,"
+            "model,snapshot_id,latency_ms,created_at) VALUES "
+            "(:trace_id,:turn_id,:conversation_id,:owner_user_id,:user_question,:resolved_query,"
+            "from_json(:retrieval_queries,'array<string>'),:retrieval_status,"
+            ":selected_evidence_json,:raw_model_output,"
+            "from_json(:parsed_citation_labels,'array<string>'),:fallback_reason,"
+            ":final_answer_text,:supported,:provider,NULL,:snapshot_id,:latency_ms,"
+            "current_timestamp())",
+            parameters={
+                "trace_id": trace_id,
+                "turn_id": turn_id,
+                "conversation_id": conversation_id,
+                "owner_user_id": owner,
+                "user_question": question,
+                "resolved_query": resolved_query,
+                "retrieval_queries": json.dumps(list(queries)),
+                "retrieval_status": getattr(retrieval_trace, "status", "unavailable"),
+                "selected_evidence_json": json.dumps(
+                    {
+                        "selected_chunk_ids": selected,
+                        "evidence": evidence,
+                        "tool_steps": steps,
+                        "stop_reason": getattr(retrieval_trace, "stop_reason", None),
+                        "evidence_support": getattr(retrieval_trace, "evidence_support", ()),
+                        "unverified_points": getattr(retrieval_trace, "unverified_points", ()),
+                        "llm_calls": [
+                            asdict(call) if is_dataclass(call) else call for call in llm_usage
+                        ],
+                    }
+                ),
+                "raw_model_output": getattr(grounding_trace, "raw_model_output", None),
+                "parsed_citation_labels": json.dumps(
+                    list(getattr(grounding_trace, "parsed_citation_labels", ()) or ())
+                ),
+                "fallback_reason": getattr(grounding_trace, "fallback_reason", None),
+                "final_answer_text": answer.text,
+                "supported": answer.supported,
+                "provider": answer.provider,
+                "snapshot_id": answer.snapshot_id,
+                "latency_ms": latency_ms,
+            },
         )
-        trace_id = values["trace_id"]
-        self.store.execute(f"INSERT INTO {self.table} ({', '.join(values)}) VALUES ({rendered})")
-        if self.retrieval_table and turn_id:
+        if turn_id:
             for number, step in enumerate(steps, 1):
-                columns = {
-                    "trace_id": trace_id,
-                    "turn_id": turn_id,
-                    "search_number": number,
-                    "search_query": step["query"] or step["action"],
-                    "retrieved_chunk_ids": "array("
-                    + ",".join(sql_literal(value) for value in step["candidate_ids"])
-                    + ")",
-                    "selected_chunk_ids": "array("
-                    + ",".join(sql_literal(value) for value in step["selected_chunk_ids"])
-                    + ")",
-                    "agent_decision": json.dumps(step),
-                    "created_at": "current_timestamp()",
-                    "latency_ms": latency_ms,
-                }
-                raw = {"retrieved_chunk_ids", "selected_chunk_ids", "created_at"}
-                rendered = ", ".join(
-                    value if key in raw else sql_literal(value) for key, value in columns.items()
+                self.execute(
+                    f"INSERT INTO {self.namespace}.rag_retrieval_traces "
+                    "(trace_id,turn_id,search_number,search_query,retrieved_chunk_ids,"
+                    "selected_chunk_ids,agent_decision,created_at,latency_ms) VALUES "
+                    "(:trace_id,:turn_id,:search_number,:search_query,"
+                    "from_json(:retrieved_chunk_ids,'array<string>'),"
+                    "from_json(:selected_chunk_ids,'array<string>'),:agent_decision,"
+                    "current_timestamp(),:latency_ms)",
+                    parameters={
+                        "trace_id": trace_id,
+                        "turn_id": turn_id,
+                        "search_number": number,
+                        "search_query": step["query"] or step["action"],
+                        "retrieved_chunk_ids": json.dumps(list(step["candidate_ids"])),
+                        "selected_chunk_ids": json.dumps(list(step["selected_chunk_ids"])),
+                        "agent_decision": json.dumps(step),
+                        "latency_ms": latency_ms,
+                    },
                 )
-                self.store.execute(
-                    f"INSERT INTO {self.retrieval_table} ({', '.join(columns)}) VALUES ({rendered})"
-                )
+
+    def record_feedback(
+        self,
+        *,
+        turn_id: str | None,
+        owner: str | None,
+        rating: str,
+        comment: str | None,
+        retrieved_chunk_ids,
+        latency_ms: int,
+    ) -> None:
+        """Stores only request/retrieval diagnostics and user feedback, never answer text.
+
+        `question`/`provider`/`snapshot_id` stay NOT NULL in the existing schema even
+        though this call no longer carries that context -- it identifies the turn by
+        `turn_id` instead, which duplicated that context in rag_conversation_turns
+        already -- so they get the same placeholder the old sink used for a missing
+        snapshot_id rather than smuggling turn_id/owner into unrelated columns.
+        `turn_id`/`owner_user_id` are columns `apply_schema` adds after the fact, the
+        same way it already does for rag_documents and rag_index_snapshots.
+        """
+        self.execute(
+            f"INSERT INTO {self.namespace}.rag_feedback "
+            "(feedback_id,question,submitted_at,provider,model,snapshot_id,"
+            "retrieved_chunk_ids,latency_ms,rating,comment,turn_id,owner_user_id) VALUES "
+            "(:feedback_id,:question,current_timestamp(),:provider,NULL,:snapshot_id,"
+            "from_json(:retrieved_chunk_ids,'array<string>'),:latency_ms,:rating,:comment,"
+            ":turn_id,:owner_user_id)",
+            parameters={
+                "feedback_id": uuid4().hex,
+                "question": "unknown",
+                "provider": "unknown",
+                "snapshot_id": "unknown",
+                "retrieved_chunk_ids": json.dumps(list(retrieved_chunk_ids)),
+                "latency_ms": latency_ms,
+                "rating": rating,
+                "comment": comment or None,
+                "turn_id": turn_id,
+                "owner_user_id": owner,
+            },
+        )
+
+
+def sql_literal(value: object) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    # Databricks SQL escapes with backslashes, not SQL-standard quote doubling:
+    # a doubled '' is silently dropped, deleting every apostrophe in the value.
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+

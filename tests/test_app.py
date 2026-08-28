@@ -31,28 +31,39 @@ class History:
         return True
 
 
+class Diagnostics:
+    def __init__(self):
+        self.feedback = []
+        self.traces = []
+
+    def record_feedback(self, **kwargs):
+        self.feedback.append(kwargs)
+
+    def record_request_trace(self, **kwargs):
+        self.traces.append(kwargs)
+
+
 def test_answer_and_feedback_routes():
-    received = []
+    diagnostics = Diagnostics()
     chunk = Chunk("c", "d", "v", 0, "evidence", (), "https://docs.databricks.com/x", "Docs")
-    app = create_app(retrieve=lambda _: [RetrievalResult(chunk, .9, "s")], provider=Provider(), threshold=.3, feedback_sink=received.append)
+    app = create_app(retrieve=lambda _: [RetrievalResult(chunk, .9, "s")], provider=Provider(), threshold=.3, diagnostics=diagnostics)
     client = app.test_client()
     response = client.post("/api/answer", json={"question": "test"})
     assert response.status_code == 200 and response.json["supported"]
     assert client.post("/api/feedback", json={"rating": "up"}).status_code == 204
-    assert received[0]["rating"] == "up"
+    assert diagnostics.feedback[0]["rating"] == "up"
 
 
 def test_answer_records_retrieval_and_grounding_trace_when_configured():
-    received = []
+    diagnostics = Diagnostics()
     chunk = Chunk("c", "d", "v", 0, "evidence", (), "https://docs.databricks.com/x", "Docs")
-    sink = type("TraceSink", (), {"record": lambda self, **kwargs: received.append(kwargs)})()
     app = create_app(
         retrieve=lambda _: [RetrievalResult(chunk, .9, "s")], provider=Provider(), threshold=.3,
-        trace_getter=lambda: None, trace_sink=sink,
+        trace_getter=lambda: None, diagnostics=diagnostics,
     )
     assert app.test_client().post("/api/answer", json={"question": "test"}).status_code == 200
-    assert received[0]["grounding_trace"].fallback_reason is None
-    assert received[0]["results"][0].chunk.chunk_id == "c"
+    assert diagnostics.traces[0]["grounding_trace"].fallback_reason is None
+    assert diagnostics.traces[0]["results"][0].chunk.chunk_id == "c"
 
 
 def test_streamed_answer_emits_retrieval_progress_and_a_final_answer():

@@ -24,8 +24,8 @@ STARTER_QUESTIONS = [
 
 
 def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, threshold: float,
-               feedback_sink: Callable[[dict], None] | None = None, history=None, identity=None,
-               trace_getter: Callable[[], object | None] | None = None, trace_sink=None,
+               history=None, identity=None, diagnostics=None,
+               trace_getter: Callable[[], object | None] | None = None,
                progress_retrieve: Callable | None = None) -> Flask:
     app = Flask(__name__)
     app.config["STARTER_QUESTIONS"] = STARTER_QUESTIONS
@@ -53,12 +53,13 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
             conversation_id = conversation_id or history.create_conversation(owner, question)
             turn_id = history.append_turn(owner, conversation_id, question=question, resolved_query=resolved_query, answer=result,
                                           citation_ids=[item.chunk_id for item in result.citations], latency_ms=round((perf_counter() - started) * 1000))
-        if trace_sink:
+        if diagnostics:
             try:
-                trace_sink.record(turn_id=turn_id, conversation_id=conversation_id, owner=owner, question=question,
-                                  resolved_query=resolved_query, retrieval_trace=retrieval_trace,
-                                  results=retrieved, grounding_trace=grounding_trace, answer=result,
-                                  latency_ms=round((perf_counter() - started) * 1000), llm_usage=llm_usage)
+                diagnostics.record_request_trace(
+                    turn_id=turn_id, conversation_id=conversation_id, owner=owner, question=question,
+                    resolved_query=resolved_query, retrieval_trace=retrieval_trace,
+                    results=retrieved, grounding_trace=grounding_trace, answer=result,
+                    latency_ms=round((perf_counter() - started) * 1000), llm_usage=llm_usage)
             except Exception:
                 app.logger.exception("failed to persist request trace")
         return {"question": question, "answer": result.text, "supported": result.supported,
@@ -179,8 +180,14 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         payload = request.get_json(silent=True) or {}
         if payload.get("rating") not in {"up", "down"}:
             return jsonify({"error": "rating must be up or down"}), 400
-        if feedback_sink:
-            feedback_sink(payload)
+        if diagnostics:
+            owner = identity.current_user_id(request) if identity else None
+            diagnostics.record_feedback(
+                turn_id=payload.get("turn_id"), owner=owner, rating=payload["rating"],
+                comment=payload.get("comment") or None,
+                retrieved_chunk_ids=payload.get("retrieved_chunk_ids", []),
+                latency_ms=payload.get("latency_ms"),
+            )
         return ("", 204)
 
     return app
