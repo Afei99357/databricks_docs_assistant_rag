@@ -22,6 +22,9 @@ class Document:
     indexed_source_last_updated: str | None = None
     consecutive_404_count: int = 0
     error_message: str | None = None
+    chunked_content_hash: str | None = None
+    chunked_source_last_updated: str | None = None
+    chunked_document_version: str | None = None
 
 
 @dataclass(frozen=True)

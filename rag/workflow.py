@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import tempfile
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -175,9 +176,17 @@ def refresh_sources(store: CorpusStore, *, chunking_revision: str = "v1") -> Ref
             indexed_source_last_updated=prior.indexed_source_last_updated if prior else None,
             consecutive_404_count=0,
             error_message=None,
+            chunked_content_hash=prior.chunked_content_hash if prior else None,
+            chunked_source_last_updated=prior.chunked_source_last_updated if prior else None,
+            chunked_document_version=prior.chunked_document_version if prior else None,
         )
         if needs_materialization:
-            if content_changed or chunking_changed:
+            chunks_already_current = (
+                document.chunked_content_hash == document.content_hash
+                and document.chunked_source_last_updated == document.source_last_updated
+                and document.chunked_document_version == document.document_version
+            )
+            if (content_changed or chunking_changed) and not chunks_already_current:
                 chunks = chunk_document(
                     doc_id=document.doc_id,
                     document_version=document.document_version or "",
@@ -186,6 +195,12 @@ def refresh_sources(store: CorpusStore, *, chunking_revision: str = "v1") -> Ref
                     nodes=item.extracted.nodes,
                 )
                 store.replace_document_chunks(document, chunks)
+                document = replace(
+                    document,
+                    chunked_content_hash=document.content_hash,
+                    chunked_source_last_updated=document.source_last_updated,
+                    chunked_document_version=document.document_version,
+                )
             store.upsert_document(
                 document,
                 action="date_changed"
@@ -272,17 +287,35 @@ def publish_snapshot(
         spec = EmbeddingSpec(embedder.model_name, embedding_revision)
         missing = store.missing_embeddings(chunks, spec)
         if missing:
-            vectors = embedder.embed([chunk.text for chunk in missing])
-            store.save_embeddings(
-                [
-                    StoredEmbedding(
-                        chunk.chunk_id,
-                        EmbeddingSpec(spec.model, spec.revision, len(vector)),
-                        tuple(vector),
-                    )
-                    for chunk, vector in zip(missing, vectors)
-                ]
-            )
+            # Commit each provider-sized batch immediately.  A killed job can
+            # therefore resume from the durable embedding cache instead of
+            # losing vectors produced earlier in the call.
+            batch_size = max(1, int(getattr(embedder, "batch_size", len(missing))))
+            total_batches = (len(missing) + batch_size - 1) // batch_size
+            for start in range(0, len(missing), batch_size):
+                batch_number = start // batch_size + 1
+                batch_chunks = missing[start : start + batch_size]
+                print(
+                    f"Caching embedding batch {batch_number}/{total_batches} "
+                    f"({len(batch_chunks)} chunks)...",
+                    flush=True,
+                )
+                vectors = embedder.embed([chunk.text for chunk in batch_chunks])
+                if len(vectors) != len(batch_chunks):
+                    raise RuntimeError("embedding provider returned an unexpected number of vectors")
+                store.save_embeddings(
+                    [
+                        StoredEmbedding(
+                            chunk.chunk_id,
+                            EmbeddingSpec(spec.model, spec.revision, len(vector)),
+                            tuple(vector),
+                        )
+                        for chunk, vector in zip(batch_chunks, vectors)
+                    ]
+                )
+                interval = float(getattr(embedder, "min_interval_seconds", 0.0))
+                if interval and batch_number < total_batches:
+                    time.sleep(interval)
         vectors = [item.vector for item in store.embeddings_for(chunks, spec)]
         published = build_from_embeddings_and_activate(
             chunks,
