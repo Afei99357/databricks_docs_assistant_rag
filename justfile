@@ -103,6 +103,11 @@ bootstrap-run:
     cd bootstrap && databricks bundle run refresh_databricks_docs_index --target dev \
         --profile "$RAG_DATABRICKS_PROFILE" {{_bundle_vars}}
 
+# Fully re-chunk and rebuild the Databricks App snapshot after a chunking repair or upgrade.
+bootstrap-repair:
+    cd bootstrap && databricks bundle run refresh_databricks_docs_index --target dev \
+        --profile "$RAG_DATABRICKS_PROFILE" {{_bundle_vars}} --params repair_chunks=true
+
 # Deploy the App Bundle's resource configuration. Run `just frontend` first.
 app-deploy:
     databricks bundle deploy --target dev --profile "$RAG_DATABRICKS_PROFILE" {{_bundle_vars}} \

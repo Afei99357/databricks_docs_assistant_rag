@@ -74,8 +74,9 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
    just frontend
    ```
 
-2. Edit `.env` for the local SQLite path. These are the required values; do **not** set
-   Databricks catalog, warehouse, or profile values for this path:
+2. Edit `.env` for the local SQLite path. A project `.env` represents the mode you are about
+   to run; for this path, use these values and do **not** set Databricks catalog, warehouse, or
+   profile values:
 
    ```text
    RAG_STORAGE_BACKEND=sqlite
@@ -253,8 +254,9 @@ Authenticate a CLI profile for the target workspace:
 databricks auth login --host https://<workspace-host> --profile <profile>
 ```
 
-Set these Databricks deployment values in `.env`. This path must use
-`RAG_STORAGE_BACKEND=databricks`; it is distinct from the local SQLite path above.
+Replace the local values in `.env` with these Databricks deployment values before deploying.
+This path must use `RAG_STORAGE_BACKEND=databricks`; it is distinct from the local SQLite path
+above.
 
 ```text
 RAG_STORAGE_BACKEND=databricks
@@ -302,6 +304,15 @@ After deployment, run the Bundle-managed Workflow from **Workflows**, or run:
 ```bash
 just bootstrap-run
 ```
+
+To force a full re-chunk and App-snapshot rebuild after a storage/chunking upgrade, use:
+
+```bash
+just bootstrap-repair
+```
+
+This passes `repair_chunks=true` to the Workflow. `just` loads the project `.env`, so no
+`set -a` / `source` commands are needed.
 
 Wait for success. This idempotently creates the catalog, schema, all Delta
 tables, and Volume; refreshes the configured sources; and writes the active App snapshot under
@@ -357,6 +368,32 @@ conversation owner. The deployed App does not read your local `.env` file.
 
 ### 5. Refresh or redeploy later
 
+#### Refresh changed documentation
+
+```bash
+just bootstrap-run
+```
+
+Runs the Databricks refresh Workflow against the configured source roots. It re-chunks changed
+documents, embeds only missing vectors, and publishes a new App snapshot only when the corpus or
+embedding specification changed.
+
+#### Fully re-chunk and re-index the App corpus
+
+Use this after a chunking/storage upgrade, a chunking repair, or when the existing governed
+chunks cannot be trusted:
+
+```bash
+just bootstrap-deploy
+just bootstrap-repair
+```
+
+`bootstrap-deploy` uploads the current job code and applies the latest schema. `bootstrap-repair`
+runs the Workflow with `repair_chunks=true`: it clears indexed hashes, re-chunks all sources,
+embeds the resulting vectors, builds a new Databricks-embedding FAISS snapshot, and activates it.
+The existing App reads that active snapshot automatically; this data rebuild does not require an
+App code deployment.
+
 #### Deploy a code-only update to an existing App (no re-index)
 
 Use this sequence when the Databricks App already exists and the active App
@@ -376,8 +413,7 @@ just deploy-code
 applies idempotent schema creation, and none of these commands crawl sources, create embeddings, or
 replace the active FAISS snapshot.
 
-To update documentation, run the bootstrap Bundle's Workflow again from **Workflows** (or run
-`just bootstrap-run`). It recursively checks the bounded official roots in
+The normal documentation refresh above recursively checks the bounded official roots in
 `rag/ingest/config/discovery_roots.yaml` and the manual supplement list. Unchanged sources do not
 create embeddings or a new snapshot. A changed corpus creates a validated immutable snapshot and
 atomically marks it active; the previous active snapshot remains usable if refresh or publication
