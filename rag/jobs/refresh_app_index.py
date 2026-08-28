@@ -12,7 +12,12 @@ from rag.storage.databricks import DatabricksStore, VolumePublisher
 from rag.workflow import publish_snapshot, refresh_sources
 
 
-def parse_args() -> argparse.Namespace:
+def _parse_bool(value: str) -> bool:
+    """Accept the string a Databricks job parameter substitutes in, e.g. "true"/"false"."""
+    return value.strip().lower() in {"1", "true", "yes"}
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalog", required=True)
     parser.add_argument("--schema", required=True)
@@ -24,10 +29,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--schema-sql-path", required=True)
     parser.add_argument(
         "--repair-chunks",
-        action="store_true",
-        help="re-chunk every document and rebuild the snapshot, ignoring change detection",
+        type=_parse_bool,
+        default=False,
+        help="re-chunk every document and rebuild the snapshot, ignoring change detection. "
+        "Accepts true/false (the job's repair_chunks parameter substitutes a string here); "
+        "omitting the flag entirely also defaults to false.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main() -> None:

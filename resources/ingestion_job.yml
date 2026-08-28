@@ -4,6 +4,9 @@ resources:
       name: databricks-docs-rag-refresh-${bundle.target}
       description: Initialize RAG storage, refresh governed documentation, and publish the Databricks App FAISS snapshot.
       max_concurrent_runs: 1
+      parameters:
+        - name: repair_chunks
+          default: "false"
       tasks:
         - task_key: refresh_and_publish
           python_wheel_task:
@@ -22,6 +25,8 @@ resources:
               - ${var.embedding_endpoint}
               - --schema-sql-path
               - ${workspace.file_path}/sql/001_rag_schema.sql
+              - --repair-chunks
+              - "{{job.parameters.repair_chunks}}"
           libraries:
             - whl: ../dist/*.whl
           new_cluster:
