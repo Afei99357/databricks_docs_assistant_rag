@@ -1,15 +1,33 @@
 # Custom Databricks Documentation RAG
 
 An internal, inspectable RAG application over official Databricks documentation. It uses
-local Qwen embeddings and FAISS for retrieval; Unity Catalog stores governed metadata,
-feedback, evaluation results, and immutable index artifacts. It does not use Genie Agent,
+local Qwen embeddings and FAISS for retrieval. It can use Unity Catalog for governed metadata,
+feedback, evaluation results, and immutable index artifacts, or SQLite for a fully local store.
+It does not use Genie Agent,
 Volume Content Search, AI Search, or Vector Search.
+
+## Contents
+
+- [Current status](#current-status)
+- [Databricks App mode](#databricks-app-mode)
+- [Local setup](#local-setup)
+  - [Local configuration reference](#local-configuration-reference)
+  - [Repairing stored chunks](#repairing-stored-chunks)
+  - [Measuring retrieval quality](#measuring-retrieval-quality)
+- [Deploy to a new Databricks workspace](#deploy-to-a-new-databricks-workspace)
+  - [Prerequisites](#1-prerequisites)
+  - [Upload the project source](#2-upload-the-project-source)
+  - [Create and run the bootstrap Workflow](#3-create-and-run-the-bootstrap-workflow)
+  - [Create and deploy the App](#4-create-and-deploy-the-app)
+  - [Refresh or redeploy later](#5-refresh-or-redeploy-later)
+- [Chat model configuration](#chat-model-configuration)
+- [Operational boundaries](#operational-boundaries)
 
 ## Current status
 
 The local prototype includes official-source discovery/fetch/extraction, deterministic
 chunking, local Qwen embedding adapters, FAISS snapshot validation/activation, retrieval
-evaluation, a grounded Flask UI, and a Databricks feedback sink. No real workspace values or
+evaluation, a grounded Flask UI, and pluggable Databricks or SQLite storage. No real workspace values or
 credentials belong in this repository.
 
 ## Databricks App mode
@@ -35,8 +53,8 @@ history/feedback tables, SQL warehouse, and the two model endpoints.
 
 The local server uses Ollama for embeddings and a local FAISS directory for retrieval. Its chat
 model is independently configurable: use Muse through llama.cpp's OpenAI-compatible API, native
-Ollama, or a Databricks serving endpoint. It still uses the configured Databricks SQL warehouse
-for the governed document, history, and feedback tables.
+Ollama, or a Databricks serving endpoint. The local setup below uses SQLite for documents,
+history, feedback, and traces; it requires no Databricks account or SQL warehouse.
 
 Every command below is a [`just`](https://github.com/casey/just) recipe. Run `just` on its own
 to list them. The recipes load `.env` themselves, so no `set -a` / `source` step is needed.
@@ -56,9 +74,12 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
    just frontend
    ```
 
-2. Edit `.env`. At minimum, configure your Databricks profile/catalog/schema/warehouse and set:
+2. Edit `.env` for the local SQLite path. These are the required values; do **not** set
+   Databricks catalog, warehouse, or profile values for this path:
 
    ```text
+   RAG_STORAGE_BACKEND=sqlite
+   RAG_SQLITE_PATH=./data/local.sqlite
    RAG_LOCAL_INDEX_DIR=/absolute/path/to/local-faiss-index
    RAG_LOCAL_TEST_USER_ID=your-email@example.com
    RAG_EMBEDDING_BASE_URL=http://localhost:11434
@@ -68,6 +89,10 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
    RAG_CHAT_MODEL=your-chat-model
    RAG_CHAT_API_KEY=local
    ```
+
+   `RAG_SQLITE_PATH` is optional—the value shown is its default—but it makes the local data
+   location explicit. It stores the downloaded corpus, conversation history, feedback, and
+   request traces. `RAG_LOCAL_INDEX_DIR` is separate: it holds the generated FAISS artifacts.
 
    `RAG_CHAT_*` controls both retrieval-agent reasoning and final-answer
    generation. A model such as Muse running through llama.cpp belongs to
@@ -79,21 +104,15 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
    `RAG_AGENT_CANDIDATES_PER_SEARCH` is the maximum number of ranked chunks
    exposed to the agent for each search tool call. The default is 10.
 
-   For a fully local store, set `RAG_STORAGE_BACKEND=sqlite`. It needs no
-   warehouse configuration; `RAG_SQLITE_PATH` defaults to `./data/local.sqlite`
-   and its parent directory is created automatically.
-
 3. Start Ollama and make sure the embedding model is available:
 
    ```bash
    just models
    ```
 
-4. Create the governed tables/Volume, fetch and chunk the configured sources, and build the
-   local Ollama-backed FAISS snapshot:
+4. Fetch and chunk the configured sources, then build the local Ollama-backed FAISS snapshot:
 
    ```bash
-   just setup-db
    just index
    ```
 
@@ -102,6 +121,26 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
    ```bash
    just serve
    ```
+
+### Local configuration reference
+
+| Variable | Purpose |
+| --- | --- |
+| `RAG_STORAGE_BACKEND` | Use `sqlite` for the fully local store; use `databricks` only when deliberately sharing Unity Catalog storage. |
+| `RAG_SQLITE_PATH` | SQLite file for the local corpus, conversations, feedback, and request traces. Defaults to `./data/local.sqlite`. |
+| `RAG_LOCAL_INDEX_DIR` | Directory containing the local FAISS snapshot artifacts. |
+| `RAG_EMBEDDING_BASE_URL` | Ollama server used to generate document and query embeddings. |
+| `RAG_EMBEDDING_MODEL` | Ollama embedding model name. |
+| `RAG_CHAT_BASE_URL` | OpenAI-compatible endpoint used for retrieval reasoning and final answers. |
+| `RAG_CHAT_MODEL` | Model name served by `RAG_CHAT_BASE_URL`. |
+| `RAG_CHAT_API_KEY` | Credential for the chat endpoint; use `local` if the server does not require one. |
+| `RAG_AGENT_CANDIDATES_PER_SEARCH` | Maximum retrieved chunks exposed to the agent per search. Higher values increase context and latency; `10` is the balanced default. |
+| `RAG_RELEVANCE_THRESHOLD` | Minimum grounding/relevance score required before the UI returns an answer. |
+| `RAG_LOCAL_TEST_USER_ID` | Local identity used to scope conversation history in the browser. |
+
+`RAG_AGENT_BASE_URL`, `RAG_AGENT_MODEL`, and `RAG_AGENT_API_KEY` are optional advanced
+overrides for using a different model for retrieval reasoning. Leave all three unset to use
+the regular `RAG_CHAT_*` model for both reasoning and final answers.
 
 While developing, `just check` runs what CI runs — `ruff` followed by the test suite. Its two
 halves are also available on their own, and `just test` forwards any arguments to `pytest`:
@@ -115,12 +154,11 @@ just test tests/test_sources.py
 `just discover` fetches and lists the official source URLs without ingesting them, which is the
 cheap way to see what the configured roots and supplements currently resolve to.
 
-`just check` skips `tests/storage/test_contract.py`, the behavioural contract suite for the
-storage protocols (conversation round-tripping, owner isolation, delete-twice semantics). It
-is opt-in because it writes to the real warehouse configured in `.env` — it creates and
-soft-deletes conversation rows in the shared Delta tables under a clearly-marked owner id
-(`storage-contract-test@example.invalid`), and `delete_conversation` is a soft delete, so
-those rows persist. Run it deliberately:
+`just check` runs the SQLite behavioural contract suite for the storage protocols
+(conversation round-tripping, owner isolation, delete-twice semantics). The same suite also
+runs against the real Databricks warehouse only when explicitly requested; it creates and
+soft-deletes conversation rows under a clearly marked owner id
+(`storage-contract-test@example.invalid`), so those rows persist. Run that check deliberately:
 
 ```bash
 just test-storage-databricks
@@ -145,8 +183,9 @@ repair through its Workflow: run it with the `repair_chunks` job parameter set t
 --json '{"job_parameters": {"repair_chunks": "true"}}'`). It defaults to `false`, so a normal
 scheduled or manual run is unaffected.
 
-Both apps read chunks from the same Delta tables, so one repair fixes the stored text for both,
-but each snapshot must then be rebuilt with its own embedding model.
+In Databricks-backed mode, both local and App snapshots read the same Delta tables, so one
+repair fixes stored text for both; each snapshot must still be rebuilt with its own embedding
+model. SQLite mode has an independent local corpus and snapshot.
 
 Run `just index` whenever you want to refresh documentation. It checks configured discovery
 roots recursively (bounded to 250 pages per root) plus the manual supplements in
@@ -162,35 +201,7 @@ fresh local snapshot.
 The local server does not use the Databricks App service principal, OBO identity, or hosted
 model endpoints.
 
-### Switch the chat model
-
-Changing models is an `.env` change followed by restarting `just serve`; the
-retrieval agent and final answer use the same `RAG_CHAT_*` settings by default.
-
-For Muse through llama.cpp:
-
-```text
-RAG_CHAT_BASE_URL=http://your-muse-host:1234/v1
-RAG_CHAT_MODEL=unsloth/Muse-Glimmer-30B-GGUF:UD-Q4_K_XL
-RAG_CHAT_API_KEY=local
-```
-
-For a chat model served by Ollama:
-
-```text
-RAG_CHAT_BASE_URL=http://localhost:11434/v1
-RAG_CHAT_MODEL=your-ollama-chat-model
-```
-
-For Databricks deployment, set `RAG_DATABRICKS_CHAT_ENDPOINT` to the serving
-endpoint name. The App receives that endpoint as `RAG_CHAT_MODEL` through its
-resource binding; it does not read the local `.env` at runtime.
-
-`OPENAI_*` and `OLLAMA_MODEL` remain accepted as compatibility aliases, but
-new configurations should use `RAG_CHAT_*`. `RAG_AGENT_*` is an advanced override only—leave it unset to
-keep one model responsible for both reasoning and final answers.
-
-## Measuring retrieval quality
+### Measuring retrieval quality
 
 `rag/evaluation_cases.yaml` holds 25 questions, each naming the one page its answer must come
 from. `just eval` runs the battery and prints a row per question — where the expected page
@@ -226,11 +237,26 @@ Authenticate a CLI profile for the target workspace:
 databricks auth login --host https://<workspace-host> --profile <profile>
 ```
 
-Set the workspace values once, in `.env`: `RAG_DATABRICKS_PROFILE`, `RAG_CATALOG`, `RAG_SCHEMA`,
-`RAG_WAREHOUSE_ID`, `RAG_ARTIFACT_VOLUME`, `RAG_DATABRICKS_EMBEDDING_ENDPOINT`,
-`RAG_DATABRICKS_CHAT_ENDPOINT` (the serving endpoint), `RAG_APP_NAME`, and
-`RAG_APP_SOURCE_PATH`. Every deployment recipe
-reads them from there, so no workspace value is repeated in a command.
+Set these Databricks deployment values in `.env`. This path must use
+`RAG_STORAGE_BACKEND=databricks`; it is distinct from the local SQLite path above.
+
+```text
+RAG_STORAGE_BACKEND=databricks
+RAG_DATABRICKS_PROFILE=<profile>
+RAG_CATALOG=<catalog>
+RAG_SCHEMA=<schema>
+RAG_WAREHOUSE_ID=<sql-warehouse-id>
+RAG_ARTIFACT_VOLUME=rag_artifacts
+RAG_DATABRICKS_EMBEDDING_ENDPOINT=databricks-qwen3-embedding-0-6b
+RAG_DATABRICKS_CHAT_ENDPOINT=<chat-serving-endpoint>
+RAG_APP_NAME=<app-name>
+RAG_APP_SOURCE_PATH=/Workspace/Users/<deployer-email>/.bundle/databricks-docs-rag/dev/files
+```
+
+`RAG_APP_SOURCE_PATH` must match the workspace path written by `databricks bundle deploy` for
+the user who deploys the bundle. The `RAG_CHAT_*`, `RAG_LOCAL_INDEX_DIR`, and
+`RAG_SQLITE_PATH` values used by the local server are not used by the deployed App or its
+bootstrap Workflow.
 
 Confirm both endpoints exist before continuing:
 
@@ -351,6 +377,35 @@ embedding endpoint.
 Conversation ownership comes from the forwarded Databricks OBO token. The browser cannot set
 the owner ID. The App service principal stores shared history and feedback in Delta tables,
 while the user token is used only to resolve the signed-in Databricks user.
+
+## Chat model configuration
+
+Local and Databricks deployments configure chat models differently. In both cases, the
+retrieval agent and final answer use the same model unless `RAG_AGENT_*` overrides are set.
+
+### Local server
+
+Changing a local model is an `.env` change followed by restarting `just serve`.
+
+```text
+RAG_CHAT_BASE_URL=http://your-muse-host:1234/v1
+RAG_CHAT_MODEL=unsloth/Muse-Glimmer-30B-GGUF:UD-Q4_K_XL
+RAG_CHAT_API_KEY=local
+```
+
+For an Ollama-hosted chat model, set `RAG_CHAT_BASE_URL=http://localhost:11434/v1` and use its
+model name for `RAG_CHAT_MODEL`.
+
+### Databricks App
+
+Set `RAG_DATABRICKS_CHAT_ENDPOINT` to the serving-endpoint name before running
+`just app-deploy`. The bundle binds that endpoint as the App's `RAG_CHAT_MODEL` resource;
+the deployed App does not read the local `RAG_CHAT_BASE_URL`, `RAG_CHAT_MODEL`, or
+`RAG_CHAT_API_KEY` values.
+
+`OPENAI_*` and `OLLAMA_MODEL` remain accepted as compatibility aliases, but new configurations
+should use `RAG_CHAT_*`. `RAG_AGENT_*` is an advanced override only—leave all three unset to
+use the regular chat model for both retrieval reasoning and final answers.
 
 ## Operational boundaries
 
