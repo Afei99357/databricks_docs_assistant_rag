@@ -24,8 +24,8 @@ STARTER_QUESTIONS = [
 
 
 def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, threshold: float,
-               feedback_sink: Callable[[dict], None] | None = None, history=None, identity=None,
-               trace_getter: Callable[[], object | None] | None = None, trace_sink=None,
+               history=None, identity=None, diagnostics=None,
+               trace_getter: Callable[[], object | None] | None = None,
                progress_retrieve: Callable | None = None) -> Flask:
     app = Flask(__name__)
     app.config["STARTER_QUESTIONS"] = STARTER_QUESTIONS
@@ -50,15 +50,16 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
             )
         turn_id = None
         if history and identity:
-            conversation_id = conversation_id or history.create(owner, question)
+            conversation_id = conversation_id or history.create_conversation(owner, question)
             turn_id = history.append_turn(owner, conversation_id, question=question, resolved_query=resolved_query, answer=result,
                                           citation_ids=[item.chunk_id for item in result.citations], latency_ms=round((perf_counter() - started) * 1000))
-        if trace_sink:
+        if diagnostics:
             try:
-                trace_sink.record(turn_id=turn_id, conversation_id=conversation_id, owner=owner, question=question,
-                                  resolved_query=resolved_query, retrieval_trace=retrieval_trace,
-                                  results=retrieved, grounding_trace=grounding_trace, answer=result,
-                                  latency_ms=round((perf_counter() - started) * 1000), llm_usage=llm_usage)
+                diagnostics.record_request_trace(
+                    turn_id=turn_id, conversation_id=conversation_id, owner=owner, question=question,
+                    resolved_query=resolved_query, retrieval_trace=retrieval_trace,
+                    results=retrieved, grounding_trace=grounding_trace, answer=result,
+                    latency_ms=round((perf_counter() - started) * 1000), llm_usage=llm_usage)
             except Exception:
                 app.logger.exception("failed to persist request trace")
         return {"question": question, "answer": result.text, "supported": result.supported,
@@ -114,7 +115,7 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
     def conversations():
         if not history or not identity: return jsonify({"conversations": []})
         owner = identity.current_user_id(request)
-        return jsonify({"conversations": [{"conversation_id": row[0], "title": row[1], "updated_at": row[2]} for row in history.list(owner)]})
+        return jsonify({"conversations": [{"conversation_id": row[0], "title": row[1], "updated_at": row[2]} for row in history.list_conversations(owner)]})
 
     @app.get("/api/conversations/<conversation_id>/turns")
     def turns(conversation_id):
@@ -128,7 +129,7 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         if not history or not identity:
             return jsonify({"error": "Conversation history is not enabled."}), 404
         owner = identity.current_user_id(request)
-        if not history.delete(owner, conversation_id):
+        if not history.delete_conversation(owner, conversation_id):
             return jsonify({"error": "Conversation not found."}), 404
         return ("", 204)
 
@@ -179,8 +180,8 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         payload = request.get_json(silent=True) or {}
         if payload.get("rating") not in {"up", "down"}:
             return jsonify({"error": "rating must be up or down"}), 400
-        if feedback_sink:
-            feedback_sink(payload)
+        if diagnostics:
+            diagnostics.record_feedback(payload)
         return ("", 204)
 
     return app

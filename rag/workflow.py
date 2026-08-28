@@ -15,7 +15,7 @@ from rag.ingest.lifecycle import REMOVAL_THRESHOLD
 from rag.ingest.pipeline import ingest_source
 from rag.ingest.sources import CuratedDoc, discover_root, load_curated_docs, load_discovery_roots
 from rag.models import Chunk, Document
-from rag.store import DatabricksStore, sql_literal
+from rag.storage.protocol import ArtifactPublisher, CorpusStore
 
 
 @dataclass(frozen=True)
@@ -110,11 +110,9 @@ def _failure(previous: Document | None, source: CuratedDoc, outcome: str) -> Doc
     )
 
 
-def refresh_sources(
-    store: DatabricksStore, *, document_table: str, chunk_table: str
-) -> RefreshResult:
+def refresh_sources(store: CorpusStore) -> RefreshResult:
     """Refresh sources incrementally; snapshot publication is a separate step."""
-    previous = store.documents(document_table)
+    previous = store.documents()
     sources = official_sources()
     current_ids = {source.doc_id for source in sources}
     counts = RefreshSummary(discovered=len(sources))
@@ -131,14 +129,14 @@ def refresh_sources(
                 if prior
                 else _failure(None, source, "network_error")
             )
-            store.upsert_document(document_table, failure, action="failed")
+            store.upsert_document(failure, action="failed")
             previous[source.doc_id] = failure
             counts = replace(counts, failed=counts.failed + 1)
             continue
         if item.outcome != "ok" or item.extracted is None:
             failed = _failure(prior, source, item.outcome)
             store.upsert_document(
-                document_table, failed, action="removed" if failed.status == "removed" else "failed"
+                failed, action="removed" if failed.status == "removed" else "failed"
             )
             previous[source.doc_id] = failed
             counts = replace(
@@ -175,14 +173,13 @@ def refresh_sources(
                     source_title=document.title or source.slug,
                     nodes=item.extracted.nodes,
                 )
-                store.replace_document_chunks(chunk_table, document, chunks)
+                store.replace_document_chunks(document, chunks)
             store.upsert_document(
-                document_table,
                 document,
                 action="date_changed" if date_changed and not content_changed else "changed",
             )
             if content_changed:
-                store.prune_document_chunks(chunk_table, document)
+                store.prune_document_chunks(document)
             previous[document.doc_id] = document
             counts = replace(
                 counts,
@@ -190,7 +187,7 @@ def refresh_sources(
                 date_triggered=counts.date_triggered + (date_changed and not content_changed),
             )
         else:
-            store.upsert_document(document_table, document, action="unchanged")
+            store.upsert_document(document, action="unchanged")
             previous[document.doc_id] = document
             counts = replace(counts, unchanged=counts.unchanged + 1)
 
@@ -210,7 +207,7 @@ def refresh_sources(
         else:
             counts = replace(counts, failed=counts.failed + 1)
         store.upsert_document(
-            document_table, missing, action="removed" if missing.status == "removed" else "missing"
+            missing, action="removed" if missing.status == "removed" else "missing"
         )
         previous[doc_id] = missing
 
@@ -224,79 +221,25 @@ def build_snapshot(
     return build_and_activate(chunks, embedder, local_root, corpus_fingerprint=corpus_fingerprint)
 
 
-def load_current_chunks(
-    store: DatabricksStore, chunk_table: str, document_table: str | None = None
-) -> list[Chunk]:
-    """Load only chunks selected by the manifest's active document version."""
-    source = chunk_table
-    columns = "chunk_id,doc_id,document_version,position,chunk_text,heading_path,source_url,source_title"
-    order_by = "doc_id,document_version,position"
-    if document_table:
-        source = (
-            f"{chunk_table} c JOIN {document_table} d ON c.doc_id=d.doc_id "
-            "AND c.document_version=d.document_version WHERE d.status IN ('ok','pending_snapshot')"
-        )
-        columns = ",".join(f"c.{column}" for column in columns.split(","))
-        order_by = ",".join(f"c.{column}" for column in order_by.split(","))
-    rows = store.execute(
-        f"SELECT {columns} FROM {source} ORDER BY {order_by}"
-    ).rows
-
-    def heading_path(value) -> tuple[str, ...]:
-        return tuple(json.loads(value) if isinstance(value, str) else value or ())
-
-    chunks = [
-        Chunk(
-            str(row[0]),
-            str(row[1]),
-            str(row[2]),
-            int(row[3]),
-            str(row[4]),
-            heading_path(row[5]),
-            str(row[6]),
-            str(row[7]),
-        )
-        for row in rows
-    ]
-    if not chunks:
-        raise RuntimeError(
-            f"no chunks found in {chunk_table}; run the source refresh before building an index"
-        )
-    return chunks
-
-
-def publish_volume_snapshot(
-    store: DatabricksStore,
+def publish_snapshot(
+    store: CorpusStore,
     *,
-    namespace: str,
-    volume_path: str,
+    publisher: ArtifactPublisher,
     chunks: list[Chunk],
     embedder,
     corpus_fingerprint: str | None = None,
-    document_table: str | None = None,
+    materialize: bool = False,
 ) -> PublishedSnapshot:
-    """Build/upload immutable artifacts, then atomically select the new snapshot."""
+    """Build immutable artifacts locally, publish them, then atomically select the new snapshot."""
     with tempfile.TemporaryDirectory(prefix="rag-app-snapshot-") as temporary:
         published = build_and_activate(
             chunks, embedder, temporary, corpus_fingerprint=corpus_fingerprint
         )
-        snapshot_id = published.metadata.snapshot_id
-        remote_dir = f"{volume_path.rstrip('/')}/snapshots/{snapshot_id}"
-        store.upload(published.local_directory / "index.faiss", f"{remote_dir}/index.faiss")
-        store.upload(published.local_directory / "chunk_map.json", f"{remote_dir}/chunk_map.json")
-        store.upload(
-            Path(temporary) / "active_snapshot.json",
-            f"{volume_path.rstrip('/')}/active_snapshot.json",
-            overwrite=True,
+        published_location = publisher.publish(
+            published.local_directory, published.metadata.snapshot_id
         )
-        table = f"{namespace}.rag_index_snapshots"
-        store.execute(f"UPDATE {table} SET active=FALSE WHERE active=TRUE")
-        metadata = published.metadata
-        store.execute(
-            f"INSERT INTO {table} (snapshot_id,embedding_model,embedding_dimension,chunk_count,artifact_path,chunk_map_path,created_at,status,active,corpus_fingerprint) VALUES "
-            f"({sql_literal(metadata.snapshot_id)},{sql_literal(metadata.embedding_model)},{metadata.embedding_dimension},{metadata.chunk_count},"
-            f"{sql_literal(remote_dir + '/index.faiss')},{sql_literal(remote_dir + '/chunk_map.json')},current_timestamp(),'active',TRUE,{sql_literal(corpus_fingerprint)})"
-        )
-        if document_table:
-            store.mark_documents_materialized(document_table, chunk_table=f"{namespace}.rag_chunks")
+        metadata = replace(published.metadata, artifact_path=f"{published_location}/index.faiss")
+        store.activate_snapshot(metadata)
+        if materialize:
+            store.mark_documents_materialized()
         return published

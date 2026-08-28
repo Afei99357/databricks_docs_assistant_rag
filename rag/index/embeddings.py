@@ -7,7 +7,6 @@ from collections.abc import Sequence
 from typing import Protocol
 
 import requests
-from databricks.sdk import WorkspaceClient
 
 
 class EmbeddingProvider(Protocol):
@@ -70,6 +69,7 @@ class DatabricksEmbeddingProvider:
         self.max_rate_limit_retries = max_rate_limit_retries
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        from databricks.sdk import WorkspaceClient
         client = WorkspaceClient(profile=self.profile) if self.profile else WorkspaceClient()
         values: list[list[float]] = []
         batches = range(0, len(texts), self.batch_size)

@@ -1,4 +1,4 @@
-from rag.store import DatabricksStore
+from rag.storage.databricks import DatabricksStore
 
 
 class Store:
@@ -15,20 +15,23 @@ class Store:
 
 def test_clear_indexed_content_hashes_reports_and_clears():
     store = Store(count=275)
-    affected = DatabricksStore.clear_indexed_content_hashes(store, "cat.sch.rag_documents")
+    store.namespace = "cat.sch"
+    affected = DatabricksStore.clear_indexed_content_hashes(store)
     assert affected == 275
     assert "UPDATE cat.sch.rag_documents SET indexed_content_hash = NULL" in store.statements[-1]
 
 
 def test_clear_counts_only_documents_that_were_materialized():
     store = Store()
-    DatabricksStore.clear_indexed_content_hashes(store, "cat.sch.rag_documents")
+    store.namespace = "cat.sch"
+    DatabricksStore.clear_indexed_content_hashes(store)
     assert "indexed_content_hash IS NOT NULL" in store.statements[0]
 
 
 def test_clear_tolerates_an_empty_table():
     store = Store(count=None)
-    assert DatabricksStore.clear_indexed_content_hashes(store, "t") == 0
+    store.namespace = "cat.sch"
+    assert DatabricksStore.clear_indexed_content_hashes(store) == 0
 
 
 def test_force_skips_the_fingerprint_gate(monkeypatch):
@@ -63,9 +66,9 @@ def _install_stubs(monkeypatch, cli, *, fingerprint):
     monkeypatch.setattr(
         cli, "refresh_sources", lambda *a, **k: type("R", (), {"corpus_fingerprint": fingerprint})()
     )
-    monkeypatch.setattr(cli, "load_current_chunks", lambda *a, **k: ["chunk"])
     monkeypatch.setattr(cli, "OllamaEmbeddingProvider", lambda *a, **k: object())
 
 
 class _Store:
+    def current_chunks(self): return ["chunk"]
     def mark_documents_materialized(self, *a, **k): pass

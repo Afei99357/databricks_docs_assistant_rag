@@ -8,8 +8,8 @@ import os
 from rag.config import Settings
 from rag.index.embeddings import DatabricksEmbeddingProvider
 from rag.index.runtime import app_snapshot_root
-from rag.store import DatabricksStore
-from rag.workflow import load_current_chunks, publish_volume_snapshot, refresh_sources
+from rag.storage.databricks import DatabricksStore, VolumePublisher
+from rag.workflow import publish_snapshot, refresh_sources
 
 
 def parse_args() -> argparse.Namespace:
@@ -40,7 +40,7 @@ def main() -> None:
         RAG_DATABRICKS_EMBEDDING_ENDPOINT=args.embedding_endpoint,
     )
     settings = Settings.from_env()
-    store = DatabricksStore(settings.warehouse_id)
+    store = DatabricksStore(settings.warehouse_id, namespace=settings.namespace)
     store.apply_schema(
         args.schema_sql_path,
         catalog=settings.catalog,
@@ -48,45 +48,37 @@ def main() -> None:
         artifact_volume=settings.artifact_volume,
     )
     if args.repair_chunks:
-        affected = store.clear_indexed_content_hashes(f"{settings.namespace}.rag_documents")
+        affected = store.clear_indexed_content_hashes()
         print(
             f"repair: cleared the indexed content hash for {affected} documents; "
             "every one will re-chunk.",
             flush=True,
         )
     print("refreshing configured documentation sources...", flush=True)
-    refreshed = refresh_sources(
-        store,
-        document_table=f"{settings.namespace}.rag_documents",
-        chunk_table=f"{settings.namespace}.rag_chunks",
-    )
-    snapshot_table = f"{settings.namespace}.rag_index_snapshots"
+    refreshed = refresh_sources(store)
     if (
         not args.repair_chunks
-        and store.active_snapshot_fingerprint(snapshot_table) == refreshed.corpus_fingerprint
+        and store.active_snapshot_fingerprint() == refreshed.corpus_fingerprint
     ):
         print(
             "App snapshot already matches the refreshed corpus; skipping embedding build.",
             flush=True,
         )
         return
-    chunks = load_current_chunks(
-        store, f"{settings.namespace}.rag_chunks", f"{settings.namespace}.rag_documents"
-    )
+    chunks = store.current_chunks()
     print(f"publishing App snapshot from {len(chunks)} chunks...", flush=True)
     embedder = DatabricksEmbeddingProvider(
         args.embedding_endpoint,
         batch_size=args.embedding_batch_size,
         min_interval_seconds=args.embedding_min_interval_seconds,
     )
-    published = publish_volume_snapshot(
+    published = publish_snapshot(
         store,
-        namespace=settings.namespace,
-        volume_path=app_snapshot_root(settings.volume_path),
+        publisher=VolumePublisher(store, app_snapshot_root(settings.volume_path)),
         chunks=chunks,
         embedder=embedder,
         corpus_fingerprint=refreshed.corpus_fingerprint,
-        document_table=f"{settings.namespace}.rag_documents",
+        materialize=True,
     )
     print(
         f"published App snapshot {published.metadata.snapshot_id} "

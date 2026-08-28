@@ -507,7 +507,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
-    { name = "databricks-sdk" },
     { name = "faiss-cpu" },
     { name = "flask" },
     { name = "gunicorn" },
@@ -519,6 +518,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+databricks = [
+    { name = "databricks-sdk" },
+]
 dev = [
     { name = "pytest" },
     { name = "ruff" },
@@ -531,7 +533,7 @@ embedding = [
 [package.metadata]
 requires-dist = [
     { name = "beautifulsoup4", specifier = ">=4.12" },
-    { name = "databricks-sdk", specifier = ">=0.50" },
+    { name = "databricks-sdk", marker = "extra == 'databricks'", specifier = ">=0.50" },
     { name = "faiss-cpu", specifier = ">=1.8" },
     { name = "flask", specifier = ">=3.0" },
     { name = "gunicorn", specifier = ">=23.0" },
@@ -545,7 +547,7 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'embedding'", specifier = ">=3.0" },
     { name = "torch", marker = "extra == 'embedding'", specifier = ">=2.0" },
 ]
-provides-extras = ["dev", "embedding"]
+provides-extras = ["dev", "embedding", "databricks"]
 
 [[package]]
 name = "databricks-sdk"

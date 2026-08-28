@@ -18,41 +18,52 @@ class Identity:
 
 class History:
     def __init__(self): self.data = {}; self.resolved = []
-    def create(self, owner, title): self.data["c1"] = []; return "c1"
-    def list(self, owner): return [("c1", "first question", "today")]
+    def create_conversation(self, owner, title): self.data["c1"] = []; return "c1"
+    def list_conversations(self, owner): return [("c1", "first question", "today")]
     def turns_for(self, owner, conversation_id): return self.data.get(conversation_id, [])
     def append_turn(self, owner, conversation_id, **kwargs):
         self.resolved.append(kwargs["resolved_query"])
         self.data.setdefault(conversation_id, []).append(("t", len(self.data.get(conversation_id, [])) + 1, kwargs["question"], kwargs["answer"].text, kwargs["answer"].supported, kwargs["answer"].snapshot_id, kwargs["citation_ids"], "today"))
 
-    def delete(self, owner, conversation_id):
+    def delete_conversation(self, owner, conversation_id):
         if conversation_id not in self.data: return False
         del self.data[conversation_id]
         return True
 
 
+class Diagnostics:
+    def __init__(self):
+        self.feedback = []
+        self.traces = []
+
+    def record_feedback(self, payload):
+        self.feedback.append(payload)
+
+    def record_request_trace(self, **kwargs):
+        self.traces.append(kwargs)
+
+
 def test_answer_and_feedback_routes():
-    received = []
+    diagnostics = Diagnostics()
     chunk = Chunk("c", "d", "v", 0, "evidence", (), "https://docs.databricks.com/x", "Docs")
-    app = create_app(retrieve=lambda _: [RetrievalResult(chunk, .9, "s")], provider=Provider(), threshold=.3, feedback_sink=received.append)
+    app = create_app(retrieve=lambda _: [RetrievalResult(chunk, .9, "s")], provider=Provider(), threshold=.3, diagnostics=diagnostics)
     client = app.test_client()
     response = client.post("/api/answer", json={"question": "test"})
     assert response.status_code == 200 and response.json["supported"]
     assert client.post("/api/feedback", json={"rating": "up"}).status_code == 204
-    assert received[0]["rating"] == "up"
+    assert diagnostics.feedback[0]["rating"] == "up"
 
 
 def test_answer_records_retrieval_and_grounding_trace_when_configured():
-    received = []
+    diagnostics = Diagnostics()
     chunk = Chunk("c", "d", "v", 0, "evidence", (), "https://docs.databricks.com/x", "Docs")
-    sink = type("TraceSink", (), {"record": lambda self, **kwargs: received.append(kwargs)})()
     app = create_app(
         retrieve=lambda _: [RetrievalResult(chunk, .9, "s")], provider=Provider(), threshold=.3,
-        trace_getter=lambda: None, trace_sink=sink,
+        trace_getter=lambda: None, diagnostics=diagnostics,
     )
     assert app.test_client().post("/api/answer", json={"question": "test"}).status_code == 200
-    assert received[0]["grounding_trace"].fallback_reason is None
-    assert received[0]["results"][0].chunk.chunk_id == "c"
+    assert diagnostics.traces[0]["grounding_trace"].fallback_reason is None
+    assert diagnostics.traces[0]["results"][0].chunk.chunk_id == "c"
 
 
 def test_streamed_answer_emits_retrieval_progress_and_a_final_answer():

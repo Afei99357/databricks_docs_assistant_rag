@@ -10,18 +10,16 @@ from rag.agent.retrieval import RetrievalAgent
 from rag.config import Settings
 from rag.evaluate import evaluate as run_evaluation
 from rag.evaluate import format_header, format_row, format_summary, load_cases
-from rag.history import ConversationRepository
 from rag.identity import LocalTestIdentityProvider
 from rag.index.embeddings import OllamaEmbeddingProvider
 from rag.index.faiss_store import read_active_fingerprint
 from rag.index.runtime import ActiveSnapshotRetriever, app_snapshot_root
 from rag.llm.providers import OpenAICompatibleProvider
-from rag.store import DatabricksFeedbackSink, DatabricksRequestTraceSink, DatabricksStore
+from rag.storage.databricks import DatabricksStore, VolumePublisher
 from rag.workflow import (
     build_snapshot,
-    load_current_chunks,
     official_sources,
-    publish_volume_snapshot,
+    publish_snapshot,
     refresh_sources,
 )
 
@@ -99,33 +97,24 @@ def serve() -> None:
     retriever, provider, agent_provider = _local_stack(settings)
     from rag.app.web import create_app
 
-    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
-    feedback = DatabricksFeedbackSink(
-        store, f"{settings.namespace}.rag_feedback", provider=provider.name, model=provider.model
+    store = DatabricksStore(
+        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace,
+        provider=provider.name, model=provider.model,
+        agent_provider=agent_provider.name, agent_model=agent_provider.model,
     )
     agent = RetrievalAgent(
         retriever, agent_provider, candidates_per_search=settings.agent_candidates_per_search
     )
-    history = ConversationRepository(store, settings.namespace)
     identity = LocalTestIdentityProvider()
     create_app(
         retrieve=agent.retrieve,
         provider=provider,
         threshold=settings.relevance_threshold,
-        feedback_sink=feedback,
-        history=history,
+        history=store,
         identity=identity,
+        diagnostics=store,
         trace_getter=lambda: agent.last_trace,
         progress_retrieve=agent.retrieve,
-        trace_sink=DatabricksRequestTraceSink(
-            store,
-            f"{settings.namespace}.rag_request_traces",
-            provider=provider.name,
-            model=provider.model,
-            retrieval_table=f"{settings.namespace}.rag_retrieval_traces",
-            agent_provider=agent_provider.name,
-            agent_model=agent_provider.model,
-        ),
     ).run(host="127.0.0.1", port=int(os.getenv("PORT", "8000")), debug=False)
 
 
@@ -134,32 +123,26 @@ def build_app_snapshot() -> None:
     settings = Settings.from_env()
     from rag.index.embeddings import DatabricksEmbeddingProvider
 
-    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
+    store = DatabricksStore(
+        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace
+    )
     embedder = DatabricksEmbeddingProvider(
         os.getenv("RAG_DATABRICKS_EMBEDDING_ENDPOINT", "databricks-qwen3-embedding-0-6b"),
         profile=settings.databricks_profile,
     )
-    refreshed = refresh_sources(
-        store,
-        document_table=f"{settings.namespace}.rag_documents",
-        chunk_table=f"{settings.namespace}.rag_chunks",
-    )
-    snapshot_table = f"{settings.namespace}.rag_index_snapshots"
-    if store.active_snapshot_fingerprint(snapshot_table) == refreshed.corpus_fingerprint:
+    refreshed = refresh_sources(store)
+    if store.active_snapshot_fingerprint() == refreshed.corpus_fingerprint:
         print("App snapshot already matches the refreshed corpus; skipping embedding build.")
         return
-    chunks = load_current_chunks(
-        store, f"{settings.namespace}.rag_chunks", f"{settings.namespace}.rag_documents"
-    )
+    chunks = store.current_chunks()
     app_index_root = app_snapshot_root(settings.volume_path)
-    published = publish_volume_snapshot(
+    published = publish_snapshot(
         store,
-        namespace=settings.namespace,
-        volume_path=app_index_root,
+        publisher=VolumePublisher(store, app_index_root),
         chunks=chunks,
         embedder=embedder,
         corpus_fingerprint=refreshed.corpus_fingerprint,
-        document_table=f"{settings.namespace}.rag_documents",
+        materialize=True,
     )
     print(
         f"published App snapshot {published.metadata.snapshot_id} ({published.metadata.chunk_count} chunks)"
@@ -177,16 +160,12 @@ def build_local_snapshot(*, force: bool = False) -> None:
     root = os.getenv("RAG_LOCAL_INDEX_DIR")
     if not root:
         raise ValueError("RAG_LOCAL_INDEX_DIR must point to the local snapshot directory")
-    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
+    store = DatabricksStore(
+        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace
+    )
     print("refreshing configured sources and chunks...", flush=True)
-    refreshed = refresh_sources(
-        store,
-        document_table=f"{settings.namespace}.rag_documents",
-        chunk_table=f"{settings.namespace}.rag_chunks",
-    )
-    chunks = load_current_chunks(
-        store, f"{settings.namespace}.rag_chunks", f"{settings.namespace}.rag_documents"
-    )
+    refreshed = refresh_sources(store)
+    chunks = store.current_chunks()
     if not force and read_active_fingerprint(root) == refreshed.corpus_fingerprint:
         print("local snapshot already matches the refreshed corpus; skipping embedding build.")
         return
@@ -197,9 +176,7 @@ def build_local_snapshot(*, force: bool = False) -> None:
     published = build_snapshot(
         chunks, embedder, root, corpus_fingerprint=refreshed.corpus_fingerprint
     )
-    store.mark_documents_materialized(
-        f"{settings.namespace}.rag_documents", chunk_table=f"{settings.namespace}.rag_chunks"
-    )
+    store.mark_documents_materialized()
     print(
         f"published local snapshot {published.metadata.snapshot_id} "
         f"({published.metadata.chunk_count} chunks)"
@@ -213,9 +190,10 @@ def repair_chunks() -> None:
     ordinary refresh would skip them all as unchanged.
     """
     settings = Settings.from_env()
-    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
-    table = f"{settings.namespace}.rag_documents"
-    affected = store.clear_indexed_content_hashes(table)
+    store = DatabricksStore(
+        settings.warehouse_id, settings.databricks_profile, namespace=settings.namespace
+    )
+    affected = store.clear_indexed_content_hashes()
     print(f"cleared the indexed content hash for {affected} documents; every one will re-chunk.")
     build_local_snapshot(force=True)
 
