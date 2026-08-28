@@ -9,13 +9,17 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from rag.index.chunking import chunk_document
-from rag.index.service import PublishedSnapshot, build_and_activate
+from rag.index.service import (
+    PublishedSnapshot,
+    build_and_activate,
+    build_from_embeddings_and_activate,
+)
 from rag.ingest.fetch import fetch_page
 from rag.ingest.lifecycle import REMOVAL_THRESHOLD
 from rag.ingest.pipeline import ingest_source
 from rag.ingest.sources import CuratedDoc, discover_root, load_curated_docs, load_discovery_roots
-from rag.models import Chunk, Document
-from rag.storage.protocol import ArtifactPublisher, CorpusStore
+from rag.models import Chunk, Document, EmbeddingSpec, StoredEmbedding
+from rag.storage.protocol import ArtifactPublisher, CorpusStore, EmbeddingStore
 
 
 @dataclass(frozen=True)
@@ -110,7 +114,7 @@ def _failure(previous: Document | None, source: CuratedDoc, outcome: str) -> Doc
     )
 
 
-def refresh_sources(store: CorpusStore) -> RefreshResult:
+def refresh_sources(store: CorpusStore, *, chunking_revision: str = "v1") -> RefreshResult:
     """Refresh sources incrementally; snapshot publication is a separate step."""
     previous = store.documents()
     sources = official_sources()
@@ -146,14 +150,22 @@ def refresh_sources(store: CorpusStore) -> RefreshResult:
             )
             continue
 
-        observed = item.document
+        observed = replace(
+            item.document,
+            document_version=(
+                f"{item.document.document_version}:{chunking_revision}"
+                if item.document.document_version
+                else None
+            ),
+        )
         date_changed = bool(
             prior
             and observed.source_last_updated
             and observed.source_last_updated != prior.indexed_source_last_updated
         )
         content_changed = prior is None or observed.content_hash != prior.indexed_content_hash
-        needs_materialization = content_changed or date_changed
+        chunking_changed = bool(prior and observed.document_version != prior.document_version)
+        needs_materialization = content_changed or date_changed or chunking_changed
         status = "pending_snapshot" if needs_materialization else prior.status
         document = replace(
             observed,
@@ -165,7 +177,7 @@ def refresh_sources(store: CorpusStore) -> RefreshResult:
             error_message=None,
         )
         if needs_materialization:
-            if content_changed:
+            if content_changed or chunking_changed:
                 chunks = chunk_document(
                     doc_id=document.doc_id,
                     document_version=document.document_version or "",
@@ -176,9 +188,11 @@ def refresh_sources(store: CorpusStore) -> RefreshResult:
                 store.replace_document_chunks(document, chunks)
             store.upsert_document(
                 document,
-                action="date_changed" if date_changed and not content_changed else "changed",
+                action="date_changed"
+                if date_changed and not content_changed and not chunking_changed
+                else "changed",
             )
-            if content_changed:
+            if content_changed or chunking_changed:
                 store.prune_document_chunks(document)
             previous[document.doc_id] = document
             counts = replace(
@@ -221,19 +235,63 @@ def build_snapshot(
     return build_and_activate(chunks, embedder, local_root, corpus_fingerprint=corpus_fingerprint)
 
 
+def build_snapshot_from_vectors(
+    chunks: list[Chunk],
+    vectors,
+    embedder,
+    local_root: str | Path,
+    *,
+    corpus_fingerprint: str | None = None,
+    embedding_revision: str = "v1",
+    chunking_revision: str = "v1",
+) -> PublishedSnapshot:
+    return build_from_embeddings_and_activate(
+        chunks,
+        vectors,
+        embedder,
+        local_root,
+        corpus_fingerprint=corpus_fingerprint,
+        embedding_revision=embedding_revision,
+        chunking_revision=chunking_revision,
+    )
+
+
 def publish_snapshot(
-    store: CorpusStore,
+    store: CorpusStore | EmbeddingStore,
     *,
     publisher: ArtifactPublisher,
     chunks: list[Chunk],
     embedder,
     corpus_fingerprint: str | None = None,
     materialize: bool = False,
+    embedding_revision: str = "v1",
+    chunking_revision: str = "v1",
 ) -> PublishedSnapshot:
     """Build immutable artifacts locally, publish them, then atomically select the new snapshot."""
     with tempfile.TemporaryDirectory(prefix="rag-app-snapshot-") as temporary:
-        published = build_and_activate(
-            chunks, embedder, temporary, corpus_fingerprint=corpus_fingerprint
+        spec = EmbeddingSpec(embedder.model_name, embedding_revision)
+        missing = store.missing_embeddings(chunks, spec)
+        if missing:
+            vectors = embedder.embed([chunk.text for chunk in missing])
+            store.save_embeddings(
+                [
+                    StoredEmbedding(
+                        chunk.chunk_id,
+                        EmbeddingSpec(spec.model, spec.revision, len(vector)),
+                        tuple(vector),
+                    )
+                    for chunk, vector in zip(missing, vectors)
+                ]
+            )
+        vectors = [item.vector for item in store.embeddings_for(chunks, spec)]
+        published = build_from_embeddings_and_activate(
+            chunks,
+            vectors,
+            embedder,
+            temporary,
+            corpus_fingerprint=corpus_fingerprint,
+            embedding_revision=embedding_revision,
+            chunking_revision=chunking_revision,
         )
         published_location = publisher.publish(
             published.local_directory, published.metadata.snapshot_id

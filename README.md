@@ -12,7 +12,7 @@ Volume Content Search, AI Search, or Vector Search.
 - [Databricks App mode](#databricks-app-mode)
 - [Local setup](#local-setup)
   - [Local configuration reference](#local-configuration-reference)
-  - [Repairing stored chunks](#repairing-stored-chunks)
+  - [Index and repair commands](#index-and-repair-commands)
   - [Measuring retrieval quality](#measuring-retrieval-quality)
 - [Deploy to a new Databricks workspace](#deploy-to-a-new-databricks-workspace)
   - [Prerequisites](#1-prerequisites)
@@ -131,6 +131,8 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
 | `RAG_LOCAL_INDEX_DIR` | Directory containing the local FAISS snapshot artifacts. |
 | `RAG_EMBEDDING_BASE_URL` | Ollama server used to generate document and query embeddings. |
 | `RAG_EMBEDDING_MODEL` | Ollama embedding model name. |
+| `RAG_EMBEDDING_REVISION` | Cache revision for embedding behavior. Increment after changing model normalization, prefixes, or another vector-space behavior. |
+| `RAG_CHUNKING_REVISION` | Chunking revision. Increment after changing chunking behavior; it deliberately creates new chunk IDs and embeddings. |
 | `RAG_CHAT_BASE_URL` | OpenAI-compatible endpoint used for retrieval reasoning and final answers. |
 | `RAG_CHAT_MODEL` | Model name served by `RAG_CHAT_BASE_URL`. |
 | `RAG_CHAT_API_KEY` | Credential for the chat endpoint; use `local` if the server does not require one. |
@@ -164,7 +166,18 @@ soft-deletes conversation rows under a clearly marked owner id
 just test-storage-databricks
 ```
 
-### Repairing stored chunks
+### Index and repair commands
+
+#### Refresh changed sources
+
+```bash
+just index
+```
+
+Fetches configured sources, re-chunks only changed documents, embeds only missing vectors, and
+builds a new local FAISS snapshot when the corpus or embedding specification changed.
+
+#### Repair stored chunks
 
 A refresh rewrites a document's chunks only when the fetched page differs from what was last
 indexed. That is the right default, but it means stored chunks that are wrong for a reason
@@ -183,20 +196,23 @@ repair through its Workflow: run it with the `repair_chunks` job parameter set t
 --json '{"job_parameters": {"repair_chunks": "true"}}'`). It defaults to `false`, so a normal
 scheduled or manual run is unaffected.
 
+If the repair is caused by a change to chunking logic or configuration, increment
+`RAG_CHUNKING_REVISION` first. That creates new chunk IDs, so the embedding cache cannot reuse
+vectors produced for the old chunk text.
+
 In Databricks-backed mode, both local and App snapshots read the same Delta tables, so one
 repair fixes stored text for both; each snapshot must still be rebuilt with its own embedding
 model. SQLite mode has an independent local corpus and snapshot.
 
-Run `just index` whenever you want to refresh documentation. It checks configured discovery
-roots recursively (bounded to 250 pages per root) plus the manual supplements in
-`rag/ingest/config/curated_urls.yaml`. It only rewrites changed document chunks. A local FAISS
-snapshot is rebuilt only when the governed corpus fingerprint differs from the local active
-snapshot; a date change published by Databricks also requests a conservative rebuild.
+#### Rebuild FAISS from cached vectors
 
-Use `just index-force` to rebuild the local embedding and FAISS artifacts even when the
-corpus fingerprint is unchanged. Unlike `just repair-chunks`, it does not clear hashes or
-re-chunk documents; it is useful after changing the embedding runtime or when you need a
-fresh local snapshot.
+```bash
+just rebuild-index
+```
+
+Rebuilds the local FAISS snapshot from persisted vectors even when the corpus fingerprint is
+unchanged. It does not fetch, re-chunk, or re-embed content; use it only when local FAISS
+artifacts need replacement.
 
 The local server does not use the Databricks App service principal, OBO identity, or hosted
 model endpoints.

@@ -8,6 +8,8 @@ import threading
 from pathlib import Path
 from uuid import uuid4
 
+from rag.models import EmbeddingSpec, StoredEmbedding
+
 _SCHEMA_FILE = Path(__file__).parent / "schema" / "sqlite.sql"
 
 
@@ -43,6 +45,21 @@ class SQLiteStore:
         for statement in sql.split(";"):
             if statement.strip():
                 conn.execute(statement)
+        self._add_missing_columns(
+            conn,
+            "rag_index_snapshots",
+            {
+                "embedding_revision": "TEXT NOT NULL DEFAULT 'v1'",
+                "chunking_revision": "TEXT NOT NULL DEFAULT 'v1'",
+            },
+        )
+
+    @staticmethod
+    def _add_missing_columns(conn, table, columns):
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for name, definition in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
     def apply_schema(
         self, schema_file=None, *, catalog=None, schema=None, artifact_volume=None
@@ -176,7 +193,7 @@ class SQLiteStore:
         c = self._connect()
         c.execute("UPDATE rag_index_snapshots SET active=0 WHERE active=1")
         c.execute(
-            "INSERT INTO rag_index_snapshots (snapshot_id,embedding_model,embedding_dimension,chunk_count,artifact_path,chunk_map_path,status,active,corpus_fingerprint,created_at) VALUES (?,?,?,?,?,?,?,1,?,CURRENT_TIMESTAMP)",
+            "INSERT INTO rag_index_snapshots (snapshot_id,embedding_model,embedding_dimension,chunk_count,artifact_path,chunk_map_path,status,active,corpus_fingerprint,embedding_revision,chunking_revision,created_at) VALUES (?,?,?,?,?,?,?,1,?,?,?,CURRENT_TIMESTAMP)",
             (
                 metadata.snapshot_id,
                 metadata.embedding_model,
@@ -186,8 +203,62 @@ class SQLiteStore:
                 metadata.artifact_path.rsplit("/", 1)[0] + "/chunk_map.json",
                 metadata.status,
                 metadata.corpus_fingerprint,
+                metadata.embedding_revision,
+                metadata.chunking_revision,
             ),
         )
+
+    def missing_embeddings(self, chunks, spec: EmbeddingSpec):
+        if not chunks:
+            return []
+        placeholders = ",".join("?" for _ in chunks)
+        rows = (
+            self._connect()
+            .execute(
+                f"SELECT chunk_id FROM rag_chunk_embeddings WHERE embedding_model=? AND embedding_revision=? AND chunk_id IN ({placeholders})",
+                (spec.model, spec.revision, *(chunk.chunk_id for chunk in chunks)),
+            )
+            .fetchall()
+        )
+        present = {row[0] for row in rows}
+        return [chunk for chunk in chunks if chunk.chunk_id not in present]
+
+    def save_embeddings(self, embeddings: list[StoredEmbedding]):
+        self._connect().executemany(
+            "INSERT OR REPLACE INTO rag_chunk_embeddings (chunk_id,embedding_model,embedding_revision,embedding_dimension,vector,created_at) VALUES (?,?,?,?,?,CURRENT_TIMESTAMP)",
+            [
+                (
+                    item.chunk_id,
+                    item.spec.model,
+                    item.spec.revision,
+                    len(item.vector),
+                    json.dumps(item.vector),
+                )
+                for item in embeddings
+            ],
+        )
+
+    def embeddings_for(self, chunks, spec: EmbeddingSpec):
+        if not chunks:
+            return []
+        placeholders = ",".join("?" for _ in chunks)
+        rows = (
+            self._connect()
+            .execute(
+                f"SELECT chunk_id,embedding_dimension,vector FROM rag_chunk_embeddings WHERE embedding_model=? AND embedding_revision=? AND chunk_id IN ({placeholders})",
+                (spec.model, spec.revision, *(chunk.chunk_id for chunk in chunks)),
+            )
+            .fetchall()
+        )
+        values = {row[0]: tuple(json.loads(row[2])) for row in rows}
+        missing = [chunk.chunk_id for chunk in chunks if chunk.chunk_id not in values]
+        if missing:
+            raise RuntimeError(f"missing compatible embeddings for {len(missing)} chunks")
+        if spec.dimension and any(len(vector) != spec.dimension for vector in values.values()):
+            raise ValueError(
+                "stored embedding dimension does not match the selected embedding spec"
+            )
+        return [StoredEmbedding(chunk.chunk_id, spec, values[chunk.chunk_id]) for chunk in chunks]
 
     def create_conversation(self, owner, title):
         from rag.conversation import history_title

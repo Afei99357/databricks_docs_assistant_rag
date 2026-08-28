@@ -27,6 +27,17 @@ class FakeCorpusStore:
 
     def __init__(self):
         self.activated = None
+        self.embeddings = {}
+
+    def missing_embeddings(self, chunks, spec):
+        return [chunk for chunk in chunks if (chunk.chunk_id, spec.model, spec.revision) not in self.embeddings]
+
+    def save_embeddings(self, embeddings):
+        for embedding in embeddings:
+            self.embeddings[(embedding.chunk_id, embedding.spec.model, embedding.spec.revision)] = embedding
+
+    def embeddings_for(self, chunks, spec):
+        return [self.embeddings[(chunk.chunk_id, spec.model, spec.revision)] for chunk in chunks]
 
     def activate_snapshot(self, metadata):
         chunk_map_path = metadata.artifact_path.rsplit("/", 1)[0] + "/chunk_map.json"
@@ -51,3 +62,30 @@ def test_publish_snapshot_persists_the_exact_artifact_and_chunk_map_paths():
     metadata, chunk_map_path = store.activated
     assert metadata.artifact_path == "/Volumes/c/s/v/app/snapshots/abc123/index.faiss"
     assert chunk_map_path == "/Volumes/c/s/v/app/snapshots/abc123/chunk_map.json"
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("faiss") is None,
+    reason="FAISS is an optional local dependency in this test environment",
+)
+def test_publish_snapshot_reuses_cached_embeddings():
+    class CountingEmbedder(HashEmbeddingProvider):
+        def __init__(self):
+            self.calls = []
+
+        def embed(self, texts):
+            self.calls.append(list(texts))
+            return super().embed(texts)
+
+    store = FakeCorpusStore()
+    publisher = FakePublisher("/Volumes/c/s/v/app/snapshots/abc123")
+    first = Chunk("a", "d", "v", 0, "first", (), "u", "title")
+    second = Chunk("b", "d", "v", 1, "second", (), "u", "title")
+    embedder = CountingEmbedder()
+
+    publish_snapshot(store, publisher=publisher, chunks=[first, second], embedder=embedder)
+    publish_snapshot(store, publisher=publisher, chunks=[first, second], embedder=embedder)
+    third = Chunk("c", "d2", "v", 0, "third", (), "u", "title")
+    publish_snapshot(store, publisher=publisher, chunks=[first, second, third], embedder=embedder)
+
+    assert embedder.calls == [["first", "second"], ["third"]]

@@ -40,15 +40,17 @@ def test_force_skips_the_fingerprint_gate(monkeypatch):
     from rag import cli
 
     calls = []
-    monkeypatch.setattr(cli, "read_active_fingerprint", lambda root: "same-fingerprint")
-    monkeypatch.setattr(cli, "build_snapshot", lambda *a, **k: calls.append("built") or _Published())
+    monkeypatch.setattr(cli, "active_manifest_matches", lambda *a, **k: True)
+    monkeypatch.setattr(
+        cli, "build_snapshot_from_vectors", lambda *a, **k: calls.append("built") or _Published()
+    )
     _install_stubs(monkeypatch, cli, fingerprint="same-fingerprint")
 
     cli.build_local_snapshot(force=False)
-    assert calls == []          # unchanged corpus: correctly skipped
+    assert calls == []  # unchanged corpus: correctly skipped
 
     cli.build_local_snapshot(force=True)
-    assert calls == ["built"]   # repair: rebuilt anyway
+    assert calls == ["built"]  # repair: rebuilt anyway
 
 
 class _Published:
@@ -63,6 +65,7 @@ def _install_stubs(monkeypatch, cli, *, fingerprint):
     monkeypatch.setenv("RAG_SCHEMA", "sch")
     monkeypatch.setenv("RAG_WAREHOUSE_ID", "wh")
     from rag import storage
+
     monkeypatch.setattr(storage, "create_store", lambda *a, **k: _Store())
     monkeypatch.setattr(
         cli, "refresh_sources", lambda *a, **k: type("R", (), {"corpus_fingerprint": fingerprint})()
@@ -71,5 +74,14 @@ def _install_stubs(monkeypatch, cli, *, fingerprint):
 
 
 class _Store:
-    def current_chunks(self): return ["chunk"]
-    def mark_documents_materialized(self, *a, **k): pass
+    def current_chunks(self):
+        return ["chunk"]
+
+    def mark_documents_materialized(self, *a, **k):
+        pass
+
+    def missing_embeddings(self, *a, **k):
+        return []
+
+    def embeddings_for(self, *a, **k):
+        return [type("Embedding", (), {"vector": (0.0,)})()]

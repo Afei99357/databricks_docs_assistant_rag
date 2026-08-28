@@ -37,6 +37,22 @@ class Chunk:
 
 
 @dataclass(frozen=True)
+class EmbeddingSpec:
+    """Identity of one compatible vector space."""
+
+    model: str
+    revision: str = "v1"
+    dimension: int | None = None
+
+
+@dataclass(frozen=True)
+class StoredEmbedding:
+    chunk_id: str
+    spec: EmbeddingSpec
+    vector: tuple[float, ...]
+
+
+@dataclass(frozen=True)
 class IndexSnapshot:
     snapshot_id: str
     embedding_model: str
@@ -46,6 +62,8 @@ class IndexSnapshot:
     status: str
     created_at: datetime
     corpus_fingerprint: str | None = None
+    embedding_revision: str = "v1"
+    chunking_revision: str = "v1"
 
 
 @dataclass(frozen=True)

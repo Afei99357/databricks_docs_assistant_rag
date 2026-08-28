@@ -57,8 +57,8 @@ setup-db:
 index:
     uv run python -m rag.cli build-local-snapshot
 
-# Rebuild the local FAISS snapshot even when its corpus fingerprint is unchanged.
-index-force:
+# Rebuild the local FAISS snapshot from persisted vectors without changing chunks.
+rebuild-index:
     uv run python -c "from rag.cli import build_local_snapshot; build_local_snapshot(force=True)"
 
 # Repair stored chunks: re-chunk everything, ignoring change detection.

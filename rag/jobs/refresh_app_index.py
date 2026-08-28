@@ -63,7 +63,7 @@ def main() -> None:
             flush=True,
         )
     print("refreshing configured documentation sources...", flush=True)
-    refreshed = refresh_sources(store)
+    refreshed = refresh_sources(store, chunking_revision=os.getenv("RAG_CHUNKING_REVISION", "v1"))
     if (
         not args.repair_chunks
         and store.active_snapshot_fingerprint() == refreshed.corpus_fingerprint

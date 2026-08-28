@@ -32,6 +32,7 @@ CATEGORIES = frozenset(
         "ai-gateway",
         "omnigent",
         "security",
+        "administration",
     }
 )
 TRACKING_PARAMS = {

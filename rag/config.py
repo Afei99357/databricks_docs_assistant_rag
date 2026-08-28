@@ -1,4 +1,5 @@
 """Environment-only configuration; no workspace values are checked in."""
+
 from __future__ import annotations
 
 import os
@@ -24,6 +25,8 @@ class Settings:
     agent_api_key: str | None
     storage_backend: str = "databricks"
     sqlite_path: str = "./data/local.sqlite"
+    embedding_revision: str = "v1"
+    chunking_revision: str = "v1"
 
     @property
     def namespace(self) -> str:
@@ -45,16 +48,25 @@ class Settings:
         # names remain fallbacks so existing private .env files still start.
         legacy_base_url = os.getenv("OPENAI_BASE_URL") or os.getenv("OLLAMA_BASE_URL")
         legacy_model = os.getenv("OPENAI_MODEL") or os.getenv("OLLAMA_MODEL")
-        return cls(os.getenv("RAG_CATALOG", ""), os.getenv("RAG_SCHEMA", ""), os.getenv("RAG_WAREHOUSE_ID", ""),
-                   os.getenv("RAG_ARTIFACT_VOLUME", "rag_artifacts"),
-                   os.getenv("RAG_EMBEDDING_MODEL", "qwen3-embedding:4b"),
-                   int(os.getenv("RAG_AGENT_CANDIDATES_PER_SEARCH", "10")), float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.35")),
-                   os.getenv("RAG_CHAT_BASE_URL") or legacy_base_url or None,
-                   os.getenv("RAG_CHAT_MODEL") or legacy_model or None,
-                   os.getenv("RAG_CHAT_API_KEY") or os.getenv("OPENAI_API_KEY") or None,
-                   os.getenv("RAG_EMBEDDING_BASE_URL") or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-                   os.getenv("RAG_DATABRICKS_PROFILE") or None,
-                   os.getenv("RAG_AGENT_BASE_URL") or None, os.getenv("RAG_AGENT_MODEL") or None,
-                   os.getenv("RAG_AGENT_API_KEY") or None,
-                   backend,
-                   os.getenv("RAG_SQLITE_PATH", "./data/local.sqlite"))
+        return cls(
+            os.getenv("RAG_CATALOG", ""),
+            os.getenv("RAG_SCHEMA", ""),
+            os.getenv("RAG_WAREHOUSE_ID", ""),
+            os.getenv("RAG_ARTIFACT_VOLUME", "rag_artifacts"),
+            os.getenv("RAG_EMBEDDING_MODEL", "qwen3-embedding:4b"),
+            int(os.getenv("RAG_AGENT_CANDIDATES_PER_SEARCH", "10")),
+            float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.35")),
+            os.getenv("RAG_CHAT_BASE_URL") or legacy_base_url or None,
+            os.getenv("RAG_CHAT_MODEL") or legacy_model or None,
+            os.getenv("RAG_CHAT_API_KEY") or os.getenv("OPENAI_API_KEY") or None,
+            os.getenv("RAG_EMBEDDING_BASE_URL")
+            or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+            os.getenv("RAG_DATABRICKS_PROFILE") or None,
+            os.getenv("RAG_AGENT_BASE_URL") or None,
+            os.getenv("RAG_AGENT_MODEL") or None,
+            os.getenv("RAG_AGENT_API_KEY") or None,
+            backend,
+            os.getenv("RAG_SQLITE_PATH", "./data/local.sqlite"),
+            os.getenv("RAG_EMBEDDING_REVISION", "v1"),
+            os.getenv("RAG_CHUNKING_REVISION", "v1"),
+        )

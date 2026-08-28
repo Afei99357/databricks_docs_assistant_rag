@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from rag.models import Chunk, Document, IndexSnapshot
+from rag.models import Chunk, Document, EmbeddingSpec, IndexSnapshot, StoredEmbedding
 
 
 @runtime_checkable
@@ -93,6 +93,17 @@ class DiagnosticsStore(Protocol):
     ) -> None: ...
 
     def record_feedback(self, payload: dict) -> None: ...
+
+
+@runtime_checkable
+class EmbeddingStore(Protocol):
+    """Durable vectors keyed by immutable chunks and an embedding specification."""
+
+    def missing_embeddings(self, chunks: list[Chunk], spec: EmbeddingSpec) -> list[Chunk]: ...
+
+    def save_embeddings(self, embeddings: list[StoredEmbedding]) -> None: ...
+
+    def embeddings_for(self, chunks: list[Chunk], spec: EmbeddingSpec) -> list[StoredEmbedding]: ...
 
 
 @runtime_checkable

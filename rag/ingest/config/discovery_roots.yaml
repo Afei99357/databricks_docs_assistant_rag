@@ -39,3 +39,9 @@
     - /aws/en/security
   category: security
   max_pages: 250
+- id: admin
+  url: https://docs.databricks.com/aws/en/admin/
+  allowed_path_prefixes:
+    - /aws/en/admin/
+  category: administration
+  max_pages: 250

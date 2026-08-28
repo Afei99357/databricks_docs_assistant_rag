@@ -12,7 +12,7 @@ from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementParameterListItem
 
 from rag.conversation import history_title
-from rag.models import Chunk, Document
+from rag.models import Chunk, Document, EmbeddingSpec, StoredEmbedding
 
 
 @dataclass(frozen=True)
@@ -125,7 +125,12 @@ class DatabricksStore:
             },
         )
         self._add_missing_columns(
-            f"{catalog}.{schema}.rag_index_snapshots", {"corpus_fingerprint": "STRING"}
+            f"{catalog}.{schema}.rag_index_snapshots",
+            {
+                "corpus_fingerprint": "STRING",
+                "embedding_revision": "STRING",
+                "chunking_revision": "STRING",
+            },
         )
 
     def _add_missing_columns(self, table: str, columns: dict[str, str]) -> None:
@@ -192,16 +197,26 @@ class DatabricksStore:
         )
         return True
 
-    def append_turn(self, owner: str, conversation_id: str, *, question: str,
-                    resolved_query: str, answer, citation_ids: list[str],
-                    latency_ms: int) -> str:
+    def append_turn(
+        self,
+        owner: str,
+        conversation_id: str,
+        *,
+        question: str,
+        resolved_query: str,
+        answer,
+        citation_ids: list[str],
+        latency_ms: int,
+    ) -> str:
         if not self._owns_active_conversation(owner, conversation_id):
             raise PermissionError("conversation not found")
-        number = int(self.execute(
-            f"SELECT coalesce(max(turn_number),0)+1 FROM {self.namespace}.rag_conversation_turns "
-            "WHERE conversation_id=:conversation_id",
-            parameters={"conversation_id": conversation_id},
-        ).rows[0][0])
+        number = int(
+            self.execute(
+                f"SELECT coalesce(max(turn_number),0)+1 FROM {self.namespace}.rag_conversation_turns "
+                "WHERE conversation_id=:conversation_id",
+                parameters={"conversation_id": conversation_id},
+            ).rows[0][0]
+        )
         turn_id = uuid4().hex
         self.execute(
             f"INSERT INTO {self.namespace}.rag_conversation_turns "
@@ -275,9 +290,9 @@ class DatabricksStore:
         self.execute(
             f"INSERT INTO {self.namespace}.rag_index_snapshots "
             "(snapshot_id,embedding_model,embedding_dimension,chunk_count,artifact_path,"
-            "chunk_map_path,status,active,corpus_fingerprint,created_at) VALUES "
+            "chunk_map_path,status,active,corpus_fingerprint,embedding_revision,chunking_revision,created_at) VALUES "
             "(:snapshot_id,:embedding_model,:embedding_dimension,:chunk_count,:artifact_path,"
-            ":chunk_map_path,:status,TRUE,:corpus_fingerprint,current_timestamp())",
+            ":chunk_map_path,:status,TRUE,:corpus_fingerprint,:embedding_revision,:chunking_revision,current_timestamp())",
             parameters={
                 "snapshot_id": metadata.snapshot_id,
                 "embedding_model": metadata.embedding_model,
@@ -287,8 +302,68 @@ class DatabricksStore:
                 "chunk_map_path": chunk_map_path,
                 "status": metadata.status,
                 "corpus_fingerprint": metadata.corpus_fingerprint,
+                "embedding_revision": metadata.embedding_revision,
+                "chunking_revision": metadata.chunking_revision,
             },
         )
+
+    def missing_embeddings(self, chunks: list[Chunk], spec: EmbeddingSpec) -> list[Chunk]:
+        if not chunks:
+            return []
+        ids = json.dumps([chunk.chunk_id for chunk in chunks])
+        rows = self.execute(
+            f"SELECT chunk_id FROM {self.namespace}.rag_chunk_embeddings "
+            "WHERE embedding_model=:model AND embedding_revision=:revision "
+            "AND array_contains(from_json(:chunk_ids,'array<string>'),chunk_id)",
+            parameters={"model": spec.model, "revision": spec.revision, "chunk_ids": ids},
+        ).rows
+        present = {str(row[0]) for row in rows}
+        return [chunk for chunk in chunks if chunk.chunk_id not in present]
+
+    def save_embeddings(self, embeddings: list[StoredEmbedding]) -> None:
+        for item in embeddings:
+            self.execute(
+                f"DELETE FROM {self.namespace}.rag_chunk_embeddings WHERE chunk_id=:chunk_id "
+                "AND embedding_model=:model AND embedding_revision=:revision",
+                parameters={
+                    "chunk_id": item.chunk_id,
+                    "model": item.spec.model,
+                    "revision": item.spec.revision,
+                },
+            )
+            self.execute(
+                f"INSERT INTO {self.namespace}.rag_chunk_embeddings "
+                "(chunk_id,embedding_model,embedding_revision,embedding_dimension,vector,created_at) "
+                "VALUES (:chunk_id,:model,:revision,CAST(:dimension AS INT),"
+                "from_json(:vector,'array<float>'),current_timestamp())",
+                parameters={
+                    "chunk_id": item.chunk_id,
+                    "model": item.spec.model,
+                    "revision": item.spec.revision,
+                    "dimension": len(item.vector),
+                    "vector": json.dumps(item.vector),
+                },
+            )
+
+    def embeddings_for(self, chunks: list[Chunk], spec: EmbeddingSpec) -> list[StoredEmbedding]:
+        if not chunks:
+            return []
+        ids = json.dumps([chunk.chunk_id for chunk in chunks])
+        rows = self.execute(
+            f"SELECT chunk_id,embedding_dimension,vector FROM {self.namespace}.rag_chunk_embeddings "
+            "WHERE embedding_model=:model AND embedding_revision=:revision "
+            "AND array_contains(from_json(:chunk_ids,'array<string>'),chunk_id)",
+            parameters={"model": spec.model, "revision": spec.revision, "chunk_ids": ids},
+        ).rows
+        values = {str(row[0]): tuple(float(value) for value in row[2]) for row in rows}
+        missing = [chunk.chunk_id for chunk in chunks if chunk.chunk_id not in values]
+        if missing:
+            raise RuntimeError(f"missing compatible embeddings for {len(missing)} chunks")
+        if spec.dimension and any(len(vector) != spec.dimension for vector in values.values()):
+            raise ValueError(
+                "stored embedding dimension does not match the selected embedding spec"
+            )
+        return [StoredEmbedding(chunk.chunk_id, spec, values[chunk.chunk_id]) for chunk in chunks]
 
     def upload(self, local_path: str | Path, volume_path: str, *, overwrite: bool = False) -> None:
         with Path(local_path).open("rb") as handle:
@@ -351,7 +426,9 @@ class DatabricksStore:
         }
         columns = [*values, "retrieved_at"]
         source = ", ".join((raw.get(name) or f":{name}") + f" AS {name}" for name in columns)
-        updates = ", ".join(f"target.{name} = source.{name}" for name in columns if name != "doc_id")
+        updates = ", ".join(
+            f"target.{name} = source.{name}" for name in columns if name != "doc_id"
+        )
         self.execute(
             f"MERGE INTO {self.namespace}.rag_documents target USING (SELECT {source}) source "
             f"ON target.doc_id = source.doc_id "
@@ -613,4 +690,3 @@ class VolumePublisher:
             manifest, f"{self.volume_path.rstrip('/')}/active_snapshot.json", overwrite=True
         )
         return remote_dir
-

@@ -87,8 +87,18 @@ class FaissSnapshot:
     ) -> FaissSnapshot:
         if not chunks:
             raise ValueError("cannot build an index with no chunks")
+        return cls.build_from_vectors(
+            chunks, embedder.embed([chunk.text for chunk in chunks]), snapshot_id
+        )
+
+    @classmethod
+    def build_from_vectors(
+        cls, chunks: Sequence[Chunk], vectors, snapshot_id: str
+    ) -> FaissSnapshot:
+        if not chunks:
+            raise ValueError("cannot build an index with no chunks")
         faiss, np = _faiss()
-        vectors = np.asarray(embedder.embed([chunk.text for chunk in chunks]), dtype="float32")
+        vectors = np.asarray(vectors, dtype="float32")
         if vectors.ndim != 2 or len(vectors) != len(chunks):
             raise ValueError("embedding provider returned an invalid vector matrix")
         faiss.normalize_L2(vectors)
@@ -167,13 +177,28 @@ class FaissSnapshot:
 
 
 def write_active_manifest(
-    root: str | Path, snapshot_id: str, *, corpus_fingerprint: str | None = None
+    root: str | Path,
+    snapshot_id: str,
+    *,
+    corpus_fingerprint: str | None = None,
+    embedding_model: str | None = None,
+    embedding_revision: str = "v1",
+    chunking_revision: str = "v1",
 ) -> None:
     """Atomically select an already-validated snapshot; never point at a partial build."""
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=root, delete=False, encoding="utf-8") as handle:
-        json.dump({"snapshot_id": snapshot_id, "corpus_fingerprint": corpus_fingerprint}, handle)
+        json.dump(
+            {
+                "snapshot_id": snapshot_id,
+                "corpus_fingerprint": corpus_fingerprint,
+                "embedding_model": embedding_model,
+                "embedding_revision": embedding_revision,
+                "chunking_revision": chunking_revision,
+            },
+            handle,
+        )
         temporary = Path(handle.name)
     temporary.replace(root / "active_snapshot.json")
 
@@ -189,4 +214,24 @@ def read_active_fingerprint(root: str | Path) -> str | None:
         json.loads(path.read_text(encoding="utf-8")).get("corpus_fingerprint")
         if path.exists()
         else None
+    )
+
+
+def active_manifest_matches(
+    root: str | Path,
+    *,
+    corpus_fingerprint: str,
+    embedding_model: str,
+    embedding_revision: str,
+    chunking_revision: str,
+) -> bool:
+    path = Path(root) / "active_snapshot.json"
+    if not path.exists():
+        return False
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    return (
+        manifest.get("corpus_fingerprint") == corpus_fingerprint
+        and manifest.get("embedding_model") == embedding_model
+        and manifest.get("embedding_revision") == embedding_revision
+        and manifest.get("chunking_revision") == chunking_revision
     )

@@ -12,11 +12,11 @@ from rag.evaluate import evaluate as run_evaluation
 from rag.evaluate import format_header, format_row, format_summary, load_cases
 from rag.identity import LocalTestIdentityProvider
 from rag.index.embeddings import OllamaEmbeddingProvider
-from rag.index.faiss_store import read_active_fingerprint
+from rag.index.faiss_store import active_manifest_matches
 from rag.index.runtime import ActiveSnapshotRetriever, app_snapshot_root
 from rag.llm.providers import OpenAICompatibleProvider
 from rag.workflow import (
-    build_snapshot,
+    build_snapshot_from_vectors,
     official_sources,
     publish_snapshot,
     refresh_sources,
@@ -135,7 +135,7 @@ def build_app_snapshot() -> None:
         os.getenv("RAG_DATABRICKS_EMBEDDING_ENDPOINT", "databricks-qwen3-embedding-0-6b"),
         profile=settings.databricks_profile,
     )
-    refreshed = refresh_sources(store)
+    refreshed = refresh_sources(store, chunking_revision=settings.chunking_revision)
     if store.active_snapshot_fingerprint() == refreshed.corpus_fingerprint:
         print("App snapshot already matches the refreshed corpus; skipping embedding build.")
         return
@@ -169,9 +169,15 @@ def build_local_snapshot(*, force: bool = False) -> None:
 
     store = create_store(settings)
     print("refreshing configured sources and chunks...", flush=True)
-    refreshed = refresh_sources(store)
+    refreshed = refresh_sources(store, chunking_revision=settings.chunking_revision)
     chunks = store.current_chunks()
-    if not force and read_active_fingerprint(root) == refreshed.corpus_fingerprint:
+    if not force and active_manifest_matches(
+        root,
+        corpus_fingerprint=refreshed.corpus_fingerprint,
+        embedding_model=settings.embedding_model,
+        embedding_revision=settings.embedding_revision,
+        chunking_revision=settings.chunking_revision,
+    ):
         # A fresh SQLite store can reuse an existing local FAISS snapshot.  Its
         # manifest still needs to record that these chunks were materialized.
         store.mark_documents_materialized()
@@ -181,8 +187,35 @@ def build_local_snapshot(*, force: bool = False) -> None:
     embedder = OllamaEmbeddingProvider(
         settings.embedding_model, base_url=settings.embedding_base_url
     )
-    published = build_snapshot(
-        chunks, embedder, root, corpus_fingerprint=refreshed.corpus_fingerprint
+    from rag.models import EmbeddingSpec, StoredEmbedding
+
+    spec = EmbeddingSpec(settings.embedding_model, settings.embedding_revision)
+    missing = store.missing_embeddings(chunks, spec)
+    print(
+        f"embedding {len(missing)} new or changed chunks; reusing {len(chunks) - len(missing)} cached vectors...",
+        flush=True,
+    )
+    if missing:
+        vectors = embedder.embed([chunk.text for chunk in missing])
+        store.save_embeddings(
+            [
+                StoredEmbedding(
+                    chunk.chunk_id,
+                    EmbeddingSpec(spec.model, spec.revision, len(vector)),
+                    tuple(vector),
+                )
+                for chunk, vector in zip(missing, vectors)
+            ]
+        )
+    embeddings = store.embeddings_for(chunks, spec)
+    published = build_snapshot_from_vectors(
+        chunks,
+        [item.vector for item in embeddings],
+        embedder,
+        root,
+        corpus_fingerprint=refreshed.corpus_fingerprint,
+        embedding_revision=settings.embedding_revision,
+        chunking_revision=settings.chunking_revision,
     )
     store.mark_documents_materialized()
     print(

@@ -24,7 +24,13 @@ CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_index_snapshots (
   snapshot_id STRING NOT NULL, embedding_model STRING NOT NULL, embedding_dimension INT NOT NULL,
   chunk_count BIGINT NOT NULL, artifact_path STRING NOT NULL, chunk_map_path STRING NOT NULL,
   source_snapshot_at TIMESTAMP, created_at TIMESTAMP NOT NULL, status STRING NOT NULL,
-  active BOOLEAN NOT NULL, validation_error STRING, corpus_fingerprint STRING
+  active BOOLEAN NOT NULL, validation_error STRING, corpus_fingerprint STRING,
+  embedding_revision STRING NOT NULL DEFAULT 'v1', chunking_revision STRING NOT NULL DEFAULT 'v1'
+) USING DELTA;
+
+CREATE TABLE IF NOT EXISTS ${catalog}.${schema}.rag_chunk_embeddings (
+  chunk_id STRING NOT NULL, embedding_model STRING NOT NULL, embedding_revision STRING NOT NULL,
+  embedding_dimension INT NOT NULL, vector ARRAY<FLOAT> NOT NULL, created_at TIMESTAMP NOT NULL
 ) USING DELTA;
 
 
