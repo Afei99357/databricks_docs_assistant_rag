@@ -223,7 +223,9 @@ def sql_literal(value: object) -> str:
         return "TRUE" if value else "FALSE"
     if isinstance(value, (int, float)):
         return str(value)
-    return "'" + str(value).replace("\\", "\\\\").replace("'", "''") + "'"
+    # Databricks SQL escapes with backslashes, not SQL-standard quote doubling:
+    # a doubled '' is silently dropped, deleting every apostrophe in the value.
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 class DatabricksFeedbackSink:
