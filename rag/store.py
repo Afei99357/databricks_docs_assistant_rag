@@ -10,6 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.sql import StatementParameterListItem
 
 from rag.models import Chunk, Document
 
@@ -20,14 +21,46 @@ class SqlResult:
     rows: list[list]
 
 
+def to_statement_parameters(values: dict[str, object]) -> list[StatementParameterListItem]:
+    """Bind values as typed parameters instead of escaping them into the statement.
+
+    Escaping is dialect-specific and silent when wrong: Databricks discards the
+    SQL-standard '' doubling, which deleted every apostrophe in the corpus on
+    2026-08-27. Parameters remove the escaping decision entirely.
+    """
+    parameters = []
+    for name, value in values.items():
+        if value is None:
+            kind, rendered = "STRING", None
+        elif isinstance(value, bool):
+            kind, rendered = "BOOLEAN", "true" if value else "false"
+        elif isinstance(value, int):
+            kind, rendered = "BIGINT", str(value)
+        elif isinstance(value, float):
+            kind, rendered = "DOUBLE", str(value)
+        else:
+            kind, rendered = "STRING", str(value)
+        parameters.append(StatementParameterListItem(name=name, type=kind, value=rendered))
+    return parameters
+
+
 class DatabricksStore:
     def __init__(self, warehouse_id: str, profile: str | None = None):
         self.workspace = WorkspaceClient(profile=profile) if profile else WorkspaceClient()
         self.warehouse_id = warehouse_id
 
-    def execute(self, statement: str, timeout_seconds: int = 300) -> SqlResult:
+    def execute(
+        self,
+        statement: str,
+        timeout_seconds: int = 300,
+        *,
+        parameters: dict[str, object] | None = None,
+    ) -> SqlResult:
         result = self.workspace.statement_execution.execute_statement(
-            warehouse_id=self.warehouse_id, statement=statement, wait_timeout="30s"
+            warehouse_id=self.warehouse_id,
+            statement=statement,
+            wait_timeout="30s",
+            parameters=to_statement_parameters(parameters) if parameters else None,
         )
         for _ in range(timeout_seconds // 3):
             if result.status.state.name not in {"PENDING", "RUNNING"}:
