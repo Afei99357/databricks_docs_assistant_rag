@@ -197,6 +197,22 @@ class DatabricksStore:
             f"AND document_version <> {sql_literal(document.document_version)}"
         )
 
+    def clear_indexed_content_hashes(self, table: str) -> int:
+        """Force the next refresh to re-chunk every document.
+
+        A refresh rewrites chunks only when the fetched page hash differs from
+        indexed_content_hash, so a document whose stored chunks are wrong for a
+        reason unrelated to the source -- a write-side defect, a chunker change --
+        is skipped forever while the page itself stays put. Clearing the recorded
+        hash is what makes that repairable.
+        """
+        rows = self.execute(
+            f"SELECT count(*) FROM {table} WHERE indexed_content_hash IS NOT NULL"
+        ).rows
+        affected = int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
+        self.execute(f"UPDATE {table} SET indexed_content_hash = NULL")
+        return affected
+
     def active_snapshot_fingerprint(self, table: str) -> str | None:
         rows = self.execute(
             f"SELECT corpus_fingerprint FROM {table} WHERE active=TRUE ORDER BY created_at DESC LIMIT 1"

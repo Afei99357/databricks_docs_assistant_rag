@@ -166,8 +166,13 @@ def build_app_snapshot() -> None:
     )
 
 
-def build_local_snapshot() -> None:
-    """Refresh governed chunks and build a local Ollama-backed FAISS snapshot."""
+def build_local_snapshot(*, force: bool = False) -> None:
+    """Refresh governed chunks and build a local Ollama-backed FAISS snapshot.
+
+    ``force`` rebuilds even when the corpus fingerprint is unchanged, which is
+    what a repair needs: repaired chunk text does not alter a document version,
+    so the fingerprint alone cannot tell that the snapshot is now stale.
+    """
     settings = Settings.from_env()
     root = os.getenv("RAG_LOCAL_INDEX_DIR")
     if not root:
@@ -182,7 +187,7 @@ def build_local_snapshot() -> None:
     chunks = load_current_chunks(
         store, f"{settings.namespace}.rag_chunks", f"{settings.namespace}.rag_documents"
     )
-    if read_active_fingerprint(root) == refreshed.corpus_fingerprint:
+    if not force and read_active_fingerprint(root) == refreshed.corpus_fingerprint:
         print("local snapshot already matches the refreshed corpus; skipping embedding build.")
         return
     print(f"building local FAISS snapshot from {len(chunks)} chunks...", flush=True)
@@ -199,6 +204,20 @@ def build_local_snapshot() -> None:
         f"published local snapshot {published.metadata.snapshot_id} "
         f"({published.metadata.chunk_count} chunks)"
     )
+
+
+def repair_chunks() -> None:
+    """Re-chunk every document, then rebuild the local snapshot from the result.
+
+    Use this when the stored chunks are wrong but the sources are not, so an
+    ordinary refresh would skip them all as unchanged.
+    """
+    settings = Settings.from_env()
+    store = DatabricksStore(settings.warehouse_id, settings.databricks_profile)
+    table = f"{settings.namespace}.rag_documents"
+    affected = store.clear_indexed_content_hashes(table)
+    print(f"cleared the indexed content hash for {affected} documents; every one will re-chunk.")
+    build_local_snapshot(force=True)
 
 
 def main() -> None:
@@ -224,6 +243,10 @@ def main() -> None:
         "build-local-snapshot",
         help="refresh sources and build an Ollama-embedding local FAISS snapshot",
     )
+    commands.add_parser(
+        "repair-chunks",
+        help="re-chunk every document and rebuild the local snapshot, ignoring change detection",
+    )
     args = parser.parse_args()
     if args.command == "evaluate":
         return evaluate(args.mode)
@@ -233,6 +256,7 @@ def main() -> None:
         "serve": serve,
         "build-app-snapshot": build_app_snapshot,
         "build-local-snapshot": build_local_snapshot,
+        "repair-chunks": repair_chunks,
     }[args.command]()
 
 

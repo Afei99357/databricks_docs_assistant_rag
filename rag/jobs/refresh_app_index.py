@@ -22,6 +22,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--embedding-batch-size", type=int, default=30)
     parser.add_argument("--embedding-min-interval-seconds", type=float, default=0.5)
     parser.add_argument("--schema-sql-path", required=True)
+    parser.add_argument(
+        "--repair-chunks",
+        action="store_true",
+        help="re-chunk every document and rebuild the snapshot, ignoring change detection",
+    )
     return parser.parse_args()
 
 
@@ -42,6 +47,13 @@ def main() -> None:
         schema=settings.schema,
         artifact_volume=settings.artifact_volume,
     )
+    if args.repair_chunks:
+        affected = store.clear_indexed_content_hashes(f"{settings.namespace}.rag_documents")
+        print(
+            f"repair: cleared the indexed content hash for {affected} documents; "
+            "every one will re-chunk.",
+            flush=True,
+        )
     print("refreshing configured documentation sources...", flush=True)
     refreshed = refresh_sources(
         store,
@@ -49,7 +61,10 @@ def main() -> None:
         chunk_table=f"{settings.namespace}.rag_chunks",
     )
     snapshot_table = f"{settings.namespace}.rag_index_snapshots"
-    if store.active_snapshot_fingerprint(snapshot_table) == refreshed.corpus_fingerprint:
+    if (
+        not args.repair_chunks
+        and store.active_snapshot_fingerprint(snapshot_table) == refreshed.corpus_fingerprint
+    ):
         print(
             "App snapshot already matches the refreshed corpus; skipping embedding build.",
             flush=True,
