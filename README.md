@@ -378,6 +378,9 @@ conversation owner. The deployed App does not read your local `.env` file.
 
 ### 5. Refresh or redeploy later
 
+Run `just bootstrap-deploy` only after changing the bootstrap Job code, Job parameters, schema,
+or bundle configuration. Otherwise, the commands below run the already deployed Workflow.
+
 #### Refresh changed documentation
 
 ```bash
@@ -390,14 +393,6 @@ embedding specification changed.
 
 #### Resume an interrupted App snapshot
 
-If this branch's Job code has not been deployed yet, deploy it once:
-
-```bash
-just bootstrap-deploy
-```
-
-Then resume the interrupted snapshot operation:
-
 ```bash
 just bootstrap-resume-snapshot
 ```
@@ -406,14 +401,6 @@ This runs with `resume_snapshot=true`. The Workflow skips source fetching and pa
 persisted Delta chunks, embeds only missing vectors, and activates the new App snapshot.
 
 #### Rebuild the App FAISS snapshot from cached vectors
-
-If this branch's Job code has not been deployed yet, deploy it once:
-
-```bash
-just bootstrap-deploy
-```
-
-Then rebuild only the FAISS artifact:
 
 ```bash
 just bootstrap-rebuild-index
@@ -428,14 +415,6 @@ are already present. If vectors are missing, run
 
 Use this after a chunking/storage upgrade, a chunking repair, or when the existing governed
 chunks cannot be trusted:
-
-If this branch's Job code has not been deployed yet, deploy it once:
-
-```bash
-just bootstrap-deploy
-```
-
-Then run the repair:
 
 ```bash
 just bootstrap-repair
