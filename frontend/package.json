@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src"
   },
   "dependencies": {
     "dompurify": "^3.2.6",
@@ -15,6 +17,7 @@
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.1",
+    "prettier": "^3.9.6",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
   }
