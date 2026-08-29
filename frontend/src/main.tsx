@@ -232,10 +232,12 @@ function Feedback({ answer }: { answer: Answer }) {
 function Transcript({
   messages,
   busy,
+  researching,
   activity,
 }: {
   messages: Message[];
   busy: boolean;
+  researching: boolean;
   activity: ResearchStep[];
 }) {
   const end = useRef<HTMLDivElement>(null);
@@ -274,7 +276,7 @@ function Transcript({
           )}
         </article>
       ))}
-      {busy && (
+      {researching && (
         <ResearchActivity
           steps={
             activity.length
@@ -301,6 +303,7 @@ function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [researching, setResearching] = useState(false);
   const [activity, setActivity] = useState<ResearchStep[]>([]);
   const [deletingConversationId, setDeletingConversationId] = useState("");
   const [error, setError] = useState("");
@@ -349,6 +352,7 @@ function App() {
   };
   const loadConversation = async (id: string) => {
     setBusy(true);
+    setResearching(false);
     setError("");
     try {
       const body = await json<{ turns: Turn[] }>(
@@ -429,6 +433,7 @@ function App() {
     const text = (starter || question).trim();
     if (!text || busy) return;
     setBusy(true);
+    setResearching(true);
     setError("");
     setQuestion("");
     setActivity([]);
@@ -449,6 +454,7 @@ function App() {
       setMessages((current) => [...current, { role: "assistant", content: message }]);
     } finally {
       setBusy(false);
+      setResearching(false);
       setActivity([]);
     }
   };
@@ -560,7 +566,7 @@ function App() {
             ＋ New
           </button>
         </header>
-        <Transcript messages={messages} busy={busy} activity={activity} />
+        <Transcript messages={messages} busy={busy} researching={researching} activity={activity} />
         {error && (
           <p class="error" role="alert">
             {error}
