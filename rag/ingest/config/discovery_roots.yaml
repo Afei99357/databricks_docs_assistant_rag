@@ -1,5 +1,11 @@
 # Automatic, bounded discovery roots. Each root stays on docs.databricks.com
 # and only follows URLs within its explicit path family.
+- id: get-started
+  url: https://docs.databricks.com/aws/en/getting-started/
+  allowed_path_prefixes:
+    - /aws/en/getting-started/
+  category: get-started
+  max_pages: 250
 - id: genie
   url: https://docs.databricks.com/aws/en/genie/
   allowed_path_prefixes:
@@ -32,6 +38,15 @@
   allowed_path_prefixes:
     - /aws/en/ai-bi/
   category: ai-bi
+  max_pages: 250
+- id: architecture
+  url: https://docs.databricks.com/aws/en/getting-started/architecture/
+  allowed_path_prefixes:
+    - /aws/en/getting-started/architecture/
+    - /aws/en/getting-started/high-level-architecture/
+    - /aws/en/lakehouse/
+    - /aws/en/lakehouse-architecture/
+  category: architecture
   max_pages: 250
 - id: databricks-apps
   url: https://docs.databricks.com/aws/en/dev-tools/databricks-apps
