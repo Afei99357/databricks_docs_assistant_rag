@@ -145,6 +145,11 @@ def refresh_sources(store: CorpusStore, *, chunking_revision: str = "v1") -> Ref
             store.upsert_document(failure, action="failed")
             previous[source.doc_id] = failure
             counts = replace(counts, failed=counts.failed + 1)
+            detail = "Failed; retained prior content" if prior else "Failed; no prior content"
+            print(
+                f"[{number}/{len(sources)}] {detail}: {source.requested_url}",
+                flush=True,
+            )
             continue
         if item.outcome != "ok" or item.extracted is None:
             failed = _failure(prior, source, item.outcome)
@@ -157,6 +162,16 @@ def refresh_sources(store: CorpusStore, *, chunking_revision: str = "v1") -> Ref
                 removed=counts.removed + (failed.status == "removed"),
                 failed=counts.failed + (failed.status != "removed"),
             )
+            if failed.status == "removed":
+                detail = "Removed after three confirmed 404s"
+            elif item.outcome == "not_found" and prior:
+                detail = (
+                    f"404; retained existing content "
+                    f"({failed.consecutive_404_count}/{REMOVAL_THRESHOLD} confirmations)"
+                )
+            else:
+                detail = f"Failed ({item.outcome})"
+            print(f"[{number}/{len(sources)}] {detail}: {source.requested_url}", flush=True)
             continue
 
         observed = replace(
@@ -189,6 +204,7 @@ def refresh_sources(store: CorpusStore, *, chunking_revision: str = "v1") -> Ref
             chunked_document_version=prior.chunked_document_version if prior else None,
         )
         if needs_materialization:
+            chunk_count = None
             chunks_already_current = (
                 document.chunked_content_hash == document.content_hash
                 and document.chunked_source_last_updated == document.source_last_updated
@@ -202,6 +218,7 @@ def refresh_sources(store: CorpusStore, *, chunking_revision: str = "v1") -> Ref
                     source_title=document.title or source.slug,
                     nodes=item.extracted.nodes,
                 )
+                chunk_count = len(chunks)
                 store.replace_document_chunks(document, chunks)
                 document = replace(
                     document,
@@ -223,10 +240,26 @@ def refresh_sources(store: CorpusStore, *, chunking_revision: str = "v1") -> Ref
                 changed=counts.changed + content_changed,
                 date_triggered=counts.date_triggered + (date_changed and not content_changed),
             )
+            if prior is None:
+                detail = f"New; chunked {chunk_count or 0} sections"
+            elif content_changed or chunking_changed:
+                detail = (
+                    f"Changed; re-chunked {chunk_count} sections"
+                    if chunk_count is not None
+                    else "Changed; stored chunks already current"
+                )
+            else:
+                detail = "Published date changed; retained stored chunks and vectors"
+            print(f"[{number}/{len(sources)}] {detail}: {source.requested_url}", flush=True)
         else:
             store.upsert_document(document, action="unchanged")
             previous[document.doc_id] = document
             counts = replace(counts, unchanged=counts.unchanged + 1)
+            print(
+                f"[{number}/{len(sources)}] Unchanged; reusing stored chunks and vectors: "
+                f"{source.requested_url}",
+                flush=True,
+            )
 
     # A page removed from roots/YAML follows the same three-run safeguard as a 404.
     for doc_id, document in list(previous.items()):
