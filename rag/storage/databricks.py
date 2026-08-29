@@ -26,6 +26,10 @@ class SqlResult:
 # 109 chunks (1,199 parameters), which exceeds that. 40 rows/insert (~440 params)
 # stays under the ceiling while keeping the average 12.6-chunk document to one statement.
 CHUNK_INSERT_BATCH = 40
+# Keep vector reads well below the Statement Execution API's 25 MB inline
+# result limit.  A vector is much larger than the other fields we read, so
+# even a result-set with a modest row count can exceed that limit.
+EMBEDDING_READ_BATCH = 100
 
 
 def to_statement_parameters(values: dict[str, object]) -> list[StatementParameterListItem]:
@@ -393,13 +397,6 @@ class DatabricksStore:
     def embeddings_for(self, chunks: list[Chunk], spec: EmbeddingSpec) -> list[StoredEmbedding]:
         if not chunks:
             return []
-        ids = json.dumps([chunk.chunk_id for chunk in chunks])
-        rows = self.execute(
-            f"SELECT chunk_id,embedding_dimension,vector FROM {self.namespace}.rag_chunk_embeddings "
-            "WHERE embedding_model=:model AND embedding_revision=:revision "
-            "AND array_contains(from_json(:chunk_ids,'array<string>'),chunk_id)",
-            parameters={"model": spec.model, "revision": spec.revision, "chunk_ids": ids},
-        ).rows
         def vector(value) -> tuple[float, ...]:
             # Same API quirk handled for heading_path/source_origins elsewhere in
             # this file: JSON_ARRAY format serializes ARRAY<FLOAT> as a JSON string
@@ -407,7 +404,17 @@ class DatabricksStore:
             parsed = json.loads(value) if isinstance(value, str) else value or ()
             return tuple(float(item) for item in parsed)
 
-        values = {str(row[0]): vector(row[2]) for row in rows}
+        values = {}
+        for start in range(0, len(chunks), EMBEDDING_READ_BATCH):
+            batch = chunks[start : start + EMBEDDING_READ_BATCH]
+            ids = json.dumps([chunk.chunk_id for chunk in batch])
+            rows = self.execute(
+                f"SELECT chunk_id,embedding_dimension,vector FROM {self.namespace}.rag_chunk_embeddings "
+                "WHERE embedding_model=:model AND embedding_revision=:revision "
+                "AND array_contains(from_json(:chunk_ids,'array<string>'),chunk_id)",
+                parameters={"model": spec.model, "revision": spec.revision, "chunk_ids": ids},
+            ).rows
+            values.update({str(row[0]): vector(row[2]) for row in rows})
         missing = [chunk.chunk_id for chunk in chunks if chunk.chunk_id not in values]
         if missing:
             raise RuntimeError(f"missing compatible embeddings for {len(missing)} chunks")
