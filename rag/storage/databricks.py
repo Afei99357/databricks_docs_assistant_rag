@@ -148,6 +148,10 @@ class DatabricksStore:
                 "chunking_revision": "STRING",
             },
         )
+        self._add_missing_columns(
+            f"{catalog}.{schema}.rag_conversation_turns",
+            {"citations_json": "STRING"},
+        )
 
     def _add_missing_columns(self, table: str, columns: dict[str, str]) -> None:
         """Upgrade existing Delta tables without relying on unsupported IF NOT EXISTS DDL."""
@@ -185,7 +189,7 @@ class DatabricksStore:
     def turns_for(self, owner: str, conversation_id: str):
         return self.execute(
             "SELECT t.turn_id,t.turn_number,t.user_question,t.answer_text,t.supported,"
-            "t.snapshot_id,t.citation_chunk_ids,t.created_at "
+            "t.snapshot_id,t.citation_chunk_ids,t.citations_json,t.created_at "
             f"FROM {self.namespace}.rag_conversation_turns t "
             f"JOIN {self.namespace}.rag_conversations c ON t.conversation_id=c.conversation_id "
             "WHERE c.owner_user_id=:owner AND c.conversation_id=:conversation_id "
@@ -223,6 +227,7 @@ class DatabricksStore:
         answer,
         citation_ids: list[str],
         latency_ms: int,
+        citations: list | None = None,
     ) -> str:
         if not self._owns_active_conversation(owner, conversation_id):
             raise PermissionError("conversation not found")
@@ -237,10 +242,10 @@ class DatabricksStore:
         self.execute(
             f"INSERT INTO {self.namespace}.rag_conversation_turns "
             "(turn_id,conversation_id,turn_number,user_question,resolved_query,answer_text,"
-            "supported,provider,model,snapshot_id,citation_chunk_ids,created_at,latency_ms) "
+            "supported,provider,model,snapshot_id,citation_chunk_ids,citations_json,created_at,latency_ms) "
             "VALUES (:turn_id,:conversation_id,:number,:question,:resolved_query,:answer_text,"
             ":supported,:provider,NULL,:snapshot_id,"
-            "from_json(:citation_ids,'array<string>'),current_timestamp(),CAST(:latency_ms AS BIGINT))",
+            "from_json(:citation_ids,'array<string>'),:citations_json,current_timestamp(),CAST(:latency_ms AS BIGINT))",
             parameters={
                 "turn_id": turn_id,
                 "conversation_id": conversation_id,
@@ -252,6 +257,7 @@ class DatabricksStore:
                 "provider": answer.provider,
                 "snapshot_id": answer.snapshot_id,
                 "citation_ids": json.dumps(list(citation_ids)),
+                "citations_json": json.dumps(citations) if citations is not None else None,
                 "latency_ms": latency_ms,
             },
         )

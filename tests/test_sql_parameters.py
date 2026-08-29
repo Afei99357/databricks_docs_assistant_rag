@@ -1,3 +1,5 @@
+import json
+
 from rag.agent.retrieval import RetrievalTrace, ToolStep
 from rag.models import Chunk, Document, EmbeddingSpec, StoredEmbedding
 from rag.storage.databricks import CHUNK_INSERT_BATCH, DatabricksStore, to_statement_parameters
@@ -92,6 +94,23 @@ def test_append_turn_casts_the_nullable_latency_ms():
     insert_statement, _ = store.execute.__self__.calls[2]
     assert "INSERT INTO" in insert_statement
     assert "CAST(:latency_ms AS BIGINT)" in insert_statement
+
+
+def test_append_turn_persists_full_citation_snapshot():
+    store = DatabricksStore.__new__(DatabricksStore)
+    store.namespace = "cat.sch"
+    store.execute = Recorder(rows=[[1], [0]]).execute
+    answer = type("A", (), {"text": "t", "supported": True, "provider": "p", "snapshot_id": "s"})()
+    citations = [{"label": "S1", "title": "Docs", "url": "https://docs.databricks.com/x", "excerpt": "e", "chunk_id": "c"}]
+
+    store.append_turn(
+        "owner@x.com", "conv-1", question="q", resolved_query="q", answer=answer,
+        citation_ids=["c"], citations=citations, latency_ms=5,
+    )
+
+    statement, parameters = store.execute.__self__.calls[2]
+    assert "citations_json" in statement
+    assert json.loads(parameters["citations_json"]) == citations
 
 
 def test_record_request_trace_casts_the_nullable_latency_ms_in_both_tables():

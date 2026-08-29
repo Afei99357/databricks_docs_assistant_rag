@@ -69,6 +69,7 @@ class ConversationStore(Protocol):
         answer,
         citation_ids: list[str],
         latency_ms: int,
+        citations: list | None = None,
     ) -> str: ...
 
 

@@ -62,6 +62,11 @@ class SQLiteStore:
                 "chunking_revision": "TEXT NOT NULL DEFAULT 'v1'",
             },
         )
+        self._add_missing_columns(
+            conn,
+            "rag_conversation_turns",
+            {"citations_json": "TEXT"},
+        )
 
     @staticmethod
     def _add_missing_columns(conn, table, columns):
@@ -300,7 +305,7 @@ class SQLiteStore:
         return (
             self._connect()
             .execute(
-                "SELECT t.turn_id,t.turn_number,t.user_question,t.answer_text,t.supported,t.snapshot_id,t.citation_chunk_ids,t.created_at FROM rag_conversation_turns t JOIN rag_conversations c ON t.conversation_id=c.conversation_id WHERE c.owner_user_id=? AND c.conversation_id=? AND c.status='active' ORDER BY t.turn_number",
+                "SELECT t.turn_id,t.turn_number,t.user_question,t.answer_text,t.supported,t.snapshot_id,t.citation_chunk_ids,t.citations_json,t.created_at FROM rag_conversation_turns t JOIN rag_conversations c ON t.conversation_id=c.conversation_id WHERE c.owner_user_id=? AND c.conversation_id=? AND c.status='active' ORDER BY t.turn_number",
                 (owner, conversation_id),
             )
             .fetchall()
@@ -326,7 +331,8 @@ class SQLiteStore:
         return True
 
     def append_turn(
-        self, owner, conversation_id, *, question, resolved_query, answer, citation_ids, latency_ms
+        self, owner, conversation_id, *, question, resolved_query, answer, citation_ids, latency_ms,
+        citations=None,
     ):
         if not self._owns(owner, conversation_id):
             raise PermissionError("conversation not found")
@@ -337,7 +343,7 @@ class SQLiteStore:
         ).fetchone()[0]
         i = uuid4().hex
         c.execute(
-            "INSERT INTO rag_conversation_turns (turn_id,conversation_id,turn_number,user_question,resolved_query,answer_text,supported,provider,model,snapshot_id,citation_chunk_ids,created_at,latency_ms) VALUES (?,?,?,?,?,?,?,?,NULL,?,?,CURRENT_TIMESTAMP,?)",
+            "INSERT INTO rag_conversation_turns (turn_id,conversation_id,turn_number,user_question,resolved_query,answer_text,supported,provider,model,snapshot_id,citation_chunk_ids,citations_json,created_at,latency_ms) VALUES (?,?,?,?,?,?,?,?,NULL,?,?,?,CURRENT_TIMESTAMP,?)",
             (
                 i,
                 conversation_id,
@@ -349,6 +355,7 @@ class SQLiteStore:
                 answer.provider,
                 answer.snapshot_id,
                 json.dumps(list(citation_ids)),
+                json.dumps(citations) if citations is not None else None,
                 latency_ms,
             ),
         )
