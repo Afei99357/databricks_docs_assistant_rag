@@ -162,6 +162,8 @@ def _allowed_discovery_url(url: str, root: DiscoveryRoot) -> bool:
 def discover_root(
     root: DiscoveryRoot,
     fetch_html: Callable[[str, str], object],
+    *,
+    on_progress: Callable[[int], None] | None = None,
 ) -> list[CuratedDoc]:
     """Recursively discover one configured root without leaving its boundary.
 
@@ -198,6 +200,8 @@ def discover_root(
                 f"discovered:{root.root_id}",
             )
         )
+        if on_progress and (len(docs) == 1 or len(docs) % 25 == 0):
+            on_progress(len(docs))
         for anchor in BeautifulSoup(result.html, "lxml").find_all("a", href=True):
             href = anchor["href"]
             if href.startswith("#"):
@@ -211,6 +215,8 @@ def discover_root(
                 )
             seen.add(candidate)
             queue.append(candidate)
+    if on_progress and len(docs) > 1 and len(docs) % 25:
+        on_progress(len(docs))
     return docs
 
 

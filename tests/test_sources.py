@@ -85,6 +85,28 @@ def test_recursive_discovery_stays_in_its_allowed_path_family():
     assert [doc.canonical_requested_url for doc in docs] == list(pages)
 
 
+def test_recursive_discovery_reports_initial_and_final_progress():
+    root = DiscoveryRoot(
+        "test", "https://docs.databricks.com/aws/en/test", ("/aws/en/test",), "genie-concepts", 3
+    )
+
+    class Result:
+        outcome, error_message = "ok", None
+
+        def __init__(self, html):
+            self.html = html
+
+    pages = {
+        "https://docs.databricks.com/aws/en/test": '<a href="/aws/en/test/one">One</a>',
+        "https://docs.databricks.com/aws/en/test/one": "<article>Done</article>",
+    }
+    progress = []
+
+    discover_root(root, lambda _doc_id, url: Result(pages[url]), on_progress=progress.append)
+
+    assert progress == [1, 2]
+
+
 def test_recursive_discovery_skips_a_linked_not_found_page():
     root = DiscoveryRoot(
         "test", "https://docs.databricks.com/aws/en/test", ("/aws/en/test",), "genie-concepts", 3

@@ -48,8 +48,16 @@ def official_sources() -> list[CuratedDoc]:
     """Load recursive roots and manual supplements, preserving every origin."""
     config_dir = Path(__file__).parent / "ingest/config"
     sources: dict[str, CuratedDoc] = {}
-    for root in load_discovery_roots(config_dir / "discovery_roots.yaml"):
-        for source in discover_root(root, fetch_page):
+    roots = load_discovery_roots(config_dir / "discovery_roots.yaml")
+    for number, root in enumerate(roots, start=1):
+        print(f"[{number}/{len(roots)}] Discovering {root.root_id} documentation...", flush=True)
+        for source in discover_root(
+            root,
+            fetch_page,
+            on_progress=lambda count, number=number, root_id=root.root_id: print(
+                f"[{number}/{len(roots)}] Discovered {count} {root_id} pages...", flush=True
+            ),
+        ):
             sources[source.doc_id] = source
     for source in load_curated_docs(config_dir / "curated_urls.yaml"):
         existing = sources.get(source.doc_id)
