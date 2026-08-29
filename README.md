@@ -507,3 +507,21 @@ use the regular chat model for both retrieval reasoning and final answers.
 
 See [`scripts/README.md`](scripts/README.md) for manual operating commands and
 [`rag/evaluation_cases.yaml`](rag/evaluation_cases.yaml) for the benchmark questions.
+
+## Data tables
+
+SQLite mode stores these tables in `RAG_SQLITE_PATH`; Databricks mode stores the same logical
+tables as Delta tables in `RAG_CATALOG.RAG_SCHEMA`.
+
+| Table | Purpose |
+| --- | --- |
+| `rag_documents` | One record per discovered source page, including its content/version state and refresh status. |
+| `rag_chunks` | The extracted, headed text chunks produced from indexed documents. |
+| `rag_chunk_embeddings` | Cached vectors for immutable chunks, keyed by embedding model and revision. |
+| `rag_index_snapshots` | Metadata and active-pointer state for published FAISS snapshots. |
+| `rag_evaluations` | Results from the retrieval evaluation question set. |
+| `rag_conversations` | Per-user conversation metadata, title, status, and timestamps. |
+| `rag_conversation_turns` | Questions and grounded answers within a conversation, including the immutable citation snapshot used to render history. |
+| `rag_feedback` | Optional user ratings and comments about an answer. |
+| `rag_request_traces` | Per-request diagnostics: resolved query, model output, selected evidence, grounding status, and latency. |
+| `rag_retrieval_traces` | Detailed retrieval-agent searches, selected chunks, and decisions for a request. |
