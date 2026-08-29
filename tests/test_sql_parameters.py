@@ -1,6 +1,6 @@
 from rag.agent.retrieval import RetrievalTrace, ToolStep
-from rag.models import Chunk, Document
-from rag.storage.databricks import DatabricksStore, to_statement_parameters
+from rag.models import Chunk, Document, EmbeddingSpec, StoredEmbedding
+from rag.storage.databricks import CHUNK_INSERT_BATCH, DatabricksStore, to_statement_parameters
 
 
 def test_strings_bind_verbatim_without_escaping():
@@ -116,3 +116,83 @@ def test_record_request_trace_casts_the_nullable_latency_ms_in_both_tables():
     retrieval_trace_statement, _ = store.execute.__self__.calls[1]
     assert "CAST(:latency_ms AS BIGINT)" in request_trace_statement
     assert "CAST(:latency_ms AS BIGINT)" in retrieval_trace_statement
+
+
+def test_save_embeddings_batches_instead_of_one_round_trip_per_row():
+    store = DatabricksStore.__new__(DatabricksStore)
+    store.namespace = "cat.sch"
+    store.execute = Recorder().execute
+    spec = EmbeddingSpec("model-a", "v1")
+    # One row past a full batch, so this must split into two DELETE+INSERT pairs.
+    embeddings = [
+        StoredEmbedding(f"chunk-{i}", spec, (0.1, 0.2)) for i in range(CHUNK_INSERT_BATCH + 1)
+    ]
+
+    store.save_embeddings(embeddings)
+
+    calls = store.execute.__self__.calls
+    assert len(calls) == 4  # DELETE+INSERT per batch, not one pair per row
+    first_delete, first_insert = calls[0], calls[1]
+    second_insert = calls[3]
+    assert "array_contains(from_json(:chunk_ids,'array<string>'),chunk_id)" in first_delete[0]
+    assert first_delete[1]["model"] == "model-a"
+    assert first_insert[0].count("VALUES") == 1
+    assert first_insert[0].count("from_json(:r") == CHUNK_INSERT_BATCH
+    assert second_insert[0].count("from_json(:r") == 1
+    assert first_insert[1]["r0_id"] == "chunk-0"
+    assert first_insert[1]["r0_dim"] == 2
+
+
+def test_save_embeddings_groups_by_model_and_revision():
+    store = DatabricksStore.__new__(DatabricksStore)
+    store.namespace = "cat.sch"
+    store.execute = Recorder().execute
+    embeddings = [
+        StoredEmbedding("chunk-1", EmbeddingSpec("model-a", "v1"), (0.1,)),
+        StoredEmbedding("chunk-2", EmbeddingSpec("model-b", "v1"), (0.2,)),
+    ]
+
+    store.save_embeddings(embeddings)
+
+    calls = store.execute.__self__.calls
+    assert len(calls) == 4  # a separate DELETE+INSERT pair per (model, revision)
+    models_deleted = {calls[0][1]["model"], calls[2][1]["model"]}
+    assert models_deleted == {"model-a", "model-b"}
+
+
+def test_save_embeddings_does_nothing_for_an_empty_list():
+    store = DatabricksStore.__new__(DatabricksStore)
+    store.namespace = "cat.sch"
+    store.execute = Recorder().execute
+
+    store.save_embeddings([])
+
+    assert store.execute.__self__.calls == []
+
+
+def test_embeddings_for_parses_the_vector_column_from_its_json_string_form():
+    # The Statement Execution API's JSON_ARRAY format serializes ARRAY<FLOAT>
+    # as a JSON string of quoted numbers, e.g. '["0.1","0.2"]' -- not a parsed
+    # list. Iterating that string directly (the pre-fix code) reads it
+    # character by character and fails on the first character, "[".
+    rows = [["chunk-1", "2", '["0.1","0.2"]']]
+    store = DatabricksStore.__new__(DatabricksStore)
+    store.namespace = "cat.sch"
+    store.execute = Recorder(rows=rows).execute
+    spec = EmbeddingSpec("model-a", "v1")
+
+    result = store.embeddings_for([_chunk()], spec)
+
+    assert result[0].vector == (0.1, 0.2)
+
+
+def test_embeddings_for_accepts_an_already_parsed_vector_list():
+    rows = [["chunk-1", "2", [0.1, 0.2]]]
+    store = DatabricksStore.__new__(DatabricksStore)
+    store.namespace = "cat.sch"
+    store.execute = Recorder(rows=rows).execute
+    spec = EmbeddingSpec("model-a", "v1")
+
+    result = store.embeddings_for([_chunk()], spec)
+
+    assert result[0].vector == (0.1, 0.2)

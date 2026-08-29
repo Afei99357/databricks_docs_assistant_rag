@@ -97,9 +97,22 @@ class DatabricksStore:
             raise RuntimeError(
                 getattr(result.status.error, "message", "Databricks SQL statement failed")
             )
+        # A result set beyond one chunk's size (row count or bytes -- large
+        # text/vector columns hit this well before row-count limits) is split
+        # across multiple chunks. Reading only result.result silently truncates
+        # to the first chunk with no error: current_chunks() and embeddings_for()
+        # both did this, so a full-corpus read quietly returned a subset.
+        rows = list(result.result.data_array or [])
+        next_chunk_index = result.result.next_chunk_index
+        while next_chunk_index is not None:
+            chunk = self.workspace.statement_execution.get_statement_result_chunk_n(
+                result.statement_id, next_chunk_index
+            )
+            rows.extend(chunk.data_array or [])
+            next_chunk_index = chunk.next_chunk_index
         return SqlResult(
             [column.name for column in result.manifest.schema.columns],
-            result.result.data_array or [],
+            rows,
         )
 
     def apply_schema(
@@ -122,6 +135,9 @@ class DatabricksStore:
                 "indexed_content_hash": "STRING",
                 "indexed_source_last_updated": "STRING",
                 "last_run_action": "STRING",
+                "chunked_content_hash": "STRING",
+                "chunked_source_last_updated": "STRING",
+                "chunked_document_version": "STRING",
             },
         )
         self._add_missing_columns(
@@ -321,34 +337,52 @@ class DatabricksStore:
         return [chunk for chunk in chunks if chunk.chunk_id not in present]
 
     def save_embeddings(self, embeddings: list[StoredEmbedding]) -> None:
+        """Write vectors in batches instead of one DELETE+INSERT round trip per row.
+
+        A single multi-row INSERT binds 2 + 3*CHUNK_INSERT_BATCH parameters --
+        well under the measured 512-parameter ceiling -- and the matching
+        batched DELETE reuses the array_contains(from_json(...)) pattern
+        already used by missing_embeddings/embeddings_for.
+        """
         total = len(embeddings)
-        if total:
-            print(f"saving {total} embedding vectors to Delta...", flush=True)
-        for number, item in enumerate(embeddings, start=1):
-            self.execute(
-                f"DELETE FROM {self.namespace}.rag_chunk_embeddings WHERE chunk_id=:chunk_id "
-                "AND embedding_model=:model AND embedding_revision=:revision",
-                parameters={
-                    "chunk_id": item.chunk_id,
-                    "model": item.spec.model,
-                    "revision": item.spec.revision,
-                },
-            )
-            self.execute(
-                f"INSERT INTO {self.namespace}.rag_chunk_embeddings "
-                "(chunk_id,embedding_model,embedding_revision,embedding_dimension,vector,created_at) "
-                "VALUES (:chunk_id,:model,:revision,CAST(:dimension AS INT),"
-                "from_json(:vector,'array<float>'),current_timestamp())",
-                parameters={
-                    "chunk_id": item.chunk_id,
-                    "model": item.spec.model,
-                    "revision": item.spec.revision,
-                    "dimension": len(item.vector),
-                    "vector": json.dumps(item.vector),
-                },
-            )
-            if number % 100 == 0 or number == total:
-                print(f"saved {number}/{total} embedding vectors to Delta...", flush=True)
+        if not total:
+            return
+        print(f"saving {total} embedding vectors to Delta...", flush=True)
+        groups: dict[tuple[str, str], list[StoredEmbedding]] = {}
+        for item in embeddings:
+            groups.setdefault((item.spec.model, item.spec.revision), []).append(item)
+        saved = 0
+        for (model, revision), items in groups.items():
+            for start in range(0, len(items), CHUNK_INSERT_BATCH):
+                batch = items[start : start + CHUNK_INSERT_BATCH]
+                self.execute(
+                    f"DELETE FROM {self.namespace}.rag_chunk_embeddings "
+                    "WHERE embedding_model=:model AND embedding_revision=:revision "
+                    "AND array_contains(from_json(:chunk_ids,'array<string>'),chunk_id)",
+                    parameters={
+                        "model": model,
+                        "revision": revision,
+                        "chunk_ids": json.dumps([item.chunk_id for item in batch]),
+                    },
+                )
+                rows, parameters = [], {"model": model, "revision": revision}
+                for offset, item in enumerate(batch):
+                    n = f"r{offset}"
+                    rows.append(
+                        f"(:{n}_id,:model,:revision,CAST(:{n}_dim AS INT),"
+                        f"from_json(:{n}_vec,'array<float>'),current_timestamp())"
+                    )
+                    parameters[f"{n}_id"] = item.chunk_id
+                    parameters[f"{n}_dim"] = len(item.vector)
+                    parameters[f"{n}_vec"] = json.dumps(list(item.vector))
+                self.execute(
+                    f"INSERT INTO {self.namespace}.rag_chunk_embeddings "
+                    "(chunk_id,embedding_model,embedding_revision,embedding_dimension,vector,created_at) "
+                    "VALUES " + ",".join(rows),
+                    parameters=parameters,
+                )
+                saved += len(batch)
+                print(f"saved {saved}/{total} embedding vectors to Delta...", flush=True)
 
     def embeddings_for(self, chunks: list[Chunk], spec: EmbeddingSpec) -> list[StoredEmbedding]:
         if not chunks:
@@ -360,7 +394,14 @@ class DatabricksStore:
             "AND array_contains(from_json(:chunk_ids,'array<string>'),chunk_id)",
             parameters={"model": spec.model, "revision": spec.revision, "chunk_ids": ids},
         ).rows
-        values = {str(row[0]): tuple(float(value) for value in row[2]) for row in rows}
+        def vector(value) -> tuple[float, ...]:
+            # Same API quirk handled for heading_path/source_origins elsewhere in
+            # this file: JSON_ARRAY format serializes ARRAY<FLOAT> as a JSON string
+            # of quoted numbers, not a parsed list.
+            parsed = json.loads(value) if isinstance(value, str) else value or ()
+            return tuple(float(item) for item in parsed)
+
+        values = {str(row[0]): vector(row[2]) for row in rows}
         missing = [chunk.chunk_id for chunk in chunks if chunk.chunk_id not in values]
         if missing:
             raise RuntimeError(f"missing compatible embeddings for {len(missing)} chunks")
@@ -378,7 +419,8 @@ class DatabricksStore:
         rows = self.execute(
             f"SELECT doc_id,requested_url,canonical_url,title,category,source_last_updated,"
             f"source_content_hash,document_version,status,source_origins,indexed_content_hash,"
-            f"indexed_source_last_updated,consecutive_404_count,error_message "
+            f"indexed_source_last_updated,consecutive_404_count,error_message,chunked_content_hash,"
+            f"chunked_source_last_updated,chunked_document_version "
             f"FROM {self.namespace}.rag_documents"
         ).rows
         result = {}
@@ -401,6 +443,9 @@ class DatabricksStore:
                 row[11],
                 int(row[12] or 0),
                 row[13],
+                row[14],
+                row[15],
+                row[16],
             )
         return result
 
@@ -423,6 +468,9 @@ class DatabricksStore:
             "consecutive_404_count": document.consecutive_404_count,
             "error_message": document.error_message,
             "last_run_action": action,
+            "chunked_content_hash": document.chunked_content_hash,
+            "chunked_source_last_updated": document.chunked_source_last_updated,
+            "chunked_document_version": document.chunked_document_version,
         }
         # Columns whose source-row expression is not a plain bound parameter.
         raw = {
@@ -513,7 +561,10 @@ class DatabricksStore:
             f"SELECT count(*) FROM {table} WHERE indexed_content_hash IS NOT NULL"
         ).rows
         affected = int(rows[0][0]) if rows and rows[0] and rows[0][0] is not None else 0
-        self.execute(f"UPDATE {table} SET indexed_content_hash = NULL")
+        self.execute(
+            f"UPDATE {table} SET indexed_content_hash = NULL, chunked_content_hash = NULL, "
+            "chunked_source_last_updated = NULL, chunked_document_version = NULL"
+        )
         return affected
 
     def active_snapshot_fingerprint(self) -> str | None:
