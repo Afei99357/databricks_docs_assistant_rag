@@ -85,6 +85,31 @@ def test_recursive_discovery_stays_in_its_allowed_path_family():
     assert [doc.canonical_requested_url for doc in docs] == list(pages)
 
 
+def test_recursive_discovery_skips_a_linked_not_found_page():
+    root = DiscoveryRoot(
+        "test", "https://docs.databricks.com/aws/en/test", ("/aws/en/test",), "genie-concepts", 3
+    )
+
+    class Result:
+        def __init__(self, outcome, html=None):
+            self.outcome, self.html = outcome, html
+            self.error_message = "HTTP 404" if outcome == "not_found" else None
+
+    pages = {
+        "https://docs.databricks.com/aws/en/test": Result(
+            "ok", '<a href="/aws/en/test/missing">Missing</a><a href="/aws/en/test/live">Live</a>'
+        ),
+        "https://docs.databricks.com/aws/en/test/missing": Result("not_found"),
+        "https://docs.databricks.com/aws/en/test/live": Result("ok", "<article>Live</article>"),
+    }
+
+    docs = discover_root(root, lambda _doc_id, url: pages[url])
+    assert [doc.canonical_requested_url for doc in docs] == [
+        "https://docs.databricks.com/aws/en/test",
+        "https://docs.databricks.com/aws/en/test/live",
+    ]
+
+
 def test_recursive_discovery_fails_at_the_configured_page_cap():
     root = DiscoveryRoot(
         "test", "https://docs.databricks.com/aws/en/test", ("/aws/en/test",), "genie-concepts", 1

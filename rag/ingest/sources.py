@@ -174,6 +174,13 @@ def discover_root(
     while queue:
         url = queue.popleft()
         result = fetch_html(compute_doc_id(url), url)
+        # Documentation navigation can briefly retain links to removed pages.
+        # A linked 404 is not evidence that the root itself is invalid, so skip
+        # it and continue discovering the rest of the bounded family. The
+        # landing page remains strict: a missing configured root is an operator
+        # configuration error and must stop the refresh.
+        if getattr(result, "outcome", None) == "not_found" and url != root.landing_url:
+            continue
         if getattr(result, "outcome", None) != "ok" or not getattr(result, "html", None):
             raise RuntimeError(
                 f"discovery root {root.root_id!r} failed at {url}: {getattr(result, 'error_message', 'unknown error')}"
