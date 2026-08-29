@@ -529,5 +529,7 @@ Delta arrays and vectors as JSON text; the column names and meanings remain the 
 | `rag_request_traces` | Per-request diagnostics: resolved query, model output, selected evidence, grounding status, and latency. | `trace_id`, `turn_id`, `conversation_id`, `owner_user_id`, `user_question`, `resolved_query`, `retrieval_queries`, `retrieval_status`, `selected_evidence_json`, `raw_model_output`, `parsed_citation_labels`, `fallback_reason`, `final_answer_text`, `supported`, `provider`, `model`, `snapshot_id`, `latency_ms`, `created_at` |
 | `rag_retrieval_traces` | Detailed retrieval-agent searches, selected chunks, and decisions for a request. | `trace_id`, `turn_id`, `search_number`, `search_query`, `retrieved_chunk_ids`, `selected_chunk_ids`, `agent_decision`, `created_at`, `latency_ms` |
 
+---
+
 \* `resolved_url` is currently present in the Delta schema only; SQLite does not need it for the
 local refresh path.
