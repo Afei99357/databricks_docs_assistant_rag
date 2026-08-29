@@ -43,6 +43,7 @@
   url: https://docs.databricks.com/aws/en/getting-started/architecture/
   allowed_path_prefixes:
     - /aws/en/getting-started/architecture/
+    - /aws/en/getting-started/high-level-architecture/
     - /aws/en/lakehouse/
     - /aws/en/lakehouse-architecture/
   category: architecture
