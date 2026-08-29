@@ -29,6 +29,12 @@
 - category: multi-agent-apps
   url: https://docs.databricks.com/aws/en/generative-ai/agent-bricks/multi-agent-supervisor
   reason: Multi-agent supervisor
+- category: machine-learning
+  url: https://docs.databricks.com/aws/en/machine-learning/graph-analysis
+  reason: Graph and network analysis with NetworkX and GraphFrames
+- category: machine-learning
+  url: https://docs.databricks.com/aws/en/machine-learning/mlops/mlops-workflow
+  reason: Recommended MLOps development, staging, and production workflow
 - category: genie-apis
   url: https://docs.databricks.com/api/workspace/genie/createspace
   reason: Space CRUD API reference
