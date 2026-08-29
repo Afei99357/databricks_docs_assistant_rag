@@ -61,10 +61,15 @@ async function streamAnswer(payload: object, onProgress: (step: ResearchStep) =>
 function markdown(text: string, citations: Citation[]) {
   const sourceLabels = new Set(citations.map((citation) => citation.label));
   const html = marked.parse(text, { gfm: true, breaks: true }) as string;
-  const withCitations = html.replace(/\[(S\d+)\]/g, (match, label: string) => (
-    sourceLabels.has(label)
-      ? `<a class="citation" href="#source-${label}" aria-label="Open ${label}">${label.slice(1)}</a>`
-      : match
+  // The backend groups multiple citations sharing one sentence into a single
+  // bracket, e.g. "[S3, S4]" -- render each label as its own separate link
+  // instead of leaving the whole group unmatched/unlinked.
+  const withCitations = html.replace(/\[((?:S\d+)(?:\s*,\s*S\d+)*)\]/g, (match, group: string) => (
+    (group.match(/S\d+/g) ?? []).map((label) => (
+      sourceLabels.has(label)
+        ? `<a class="citation" href="#source-${label}" aria-label="Open ${label}">${label.slice(1)}</a>`
+        : label
+    )).join(", ")
   ));
   return DOMPurify.sanitize(withCitations, {
     ADD_ATTR: ["target"],
