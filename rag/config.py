@@ -20,9 +20,6 @@ class Settings:
     chat_api_key: str | None
     embedding_base_url: str
     databricks_profile: str | None
-    agent_base_url: str | None
-    agent_model: str | None
-    agent_api_key: str | None
     storage_backend: str = "databricks"
     sqlite_path: str = "./data/local.sqlite"
     embedding_revision: str = "v1"
@@ -62,9 +59,6 @@ class Settings:
             os.getenv("RAG_EMBEDDING_BASE_URL")
             or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
             os.getenv("RAG_DATABRICKS_PROFILE") or None,
-            os.getenv("RAG_AGENT_BASE_URL") or None,
-            os.getenv("RAG_AGENT_MODEL") or None,
-            os.getenv("RAG_AGENT_API_KEY") or None,
             backend,
             os.getenv("RAG_SQLITE_PATH", "./data/local.sqlite"),
             os.getenv("RAG_EMBEDDING_REVISION", "v1"),

@@ -14,7 +14,6 @@ def _settings(**overrides) -> Settings:
         "agent_candidates_per_search": 10, "relevance_threshold": 0.35,
         "chat_base_url": None, "chat_model": None, "chat_api_key": None,
         "embedding_base_url": "http://localhost", "databricks_profile": None,
-        "agent_base_url": None, "agent_model": None, "agent_api_key": None,
         "storage_backend": "databricks",
     }
     values.update(overrides)
