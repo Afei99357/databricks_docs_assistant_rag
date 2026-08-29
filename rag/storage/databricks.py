@@ -97,9 +97,22 @@ class DatabricksStore:
             raise RuntimeError(
                 getattr(result.status.error, "message", "Databricks SQL statement failed")
             )
+        # A result set beyond one chunk's size (row count or bytes -- large
+        # text/vector columns hit this well before row-count limits) is split
+        # across multiple chunks. Reading only result.result silently truncates
+        # to the first chunk with no error: current_chunks() and embeddings_for()
+        # both did this, so a full-corpus read quietly returned a subset.
+        rows = list(result.result.data_array or [])
+        next_chunk_index = result.result.next_chunk_index
+        while next_chunk_index is not None:
+            chunk = self.workspace.statement_execution.get_statement_result_chunk_n(
+                result.statement_id, next_chunk_index
+            )
+            rows.extend(chunk.data_array or [])
+            next_chunk_index = chunk.next_chunk_index
         return SqlResult(
             [column.name for column in result.manifest.schema.columns],
-            result.result.data_array or [],
+            rows,
         )
 
     def apply_schema(
