@@ -33,6 +33,9 @@ CATEGORIES = frozenset(
         "omnigent",
         "security",
         "administration",
+        "agents",
+        "machine-learning",
+        "ai-bi",
     }
 )
 TRACKING_PARAMS = {

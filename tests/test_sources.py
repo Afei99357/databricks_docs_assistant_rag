@@ -56,6 +56,9 @@ def test_discovery_roots_are_bounded_and_configured():
         "omnigent",
         "security",
         "admin",
+        "agents",
+        "machine-learning",
+        "ai-bi",
     }
     assert all(root.max_pages == 250 for root in roots)
 
