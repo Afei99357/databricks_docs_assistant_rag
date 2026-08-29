@@ -22,6 +22,7 @@ Volume Content Search, AI Search, or Vector Search.
   - [Refresh or redeploy later](#5-refresh-or-redeploy-later)
 - [Chat model configuration](#chat-model-configuration)
 - [Operational boundaries](#operational-boundaries)
+- [Data tables](#data-tables)
 
 ## Current status
 
