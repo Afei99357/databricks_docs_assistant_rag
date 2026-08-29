@@ -36,6 +36,8 @@ CATEGORIES = frozenset(
         "agents",
         "machine-learning",
         "ai-bi",
+        "get-started",
+        "architecture",
     }
 )
 TRACKING_PARAMS = {
