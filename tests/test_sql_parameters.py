@@ -2,7 +2,12 @@ import json
 
 from rag.agent.retrieval import RetrievalTrace, ToolStep
 from rag.models import Chunk, Document, EmbeddingSpec, StoredEmbedding
-from rag.storage.databricks import CHUNK_INSERT_BATCH, DatabricksStore, to_statement_parameters
+from rag.storage.databricks import (
+    CHUNK_INSERT_BATCH,
+    EMBEDDING_READ_BATCH,
+    DatabricksStore,
+    to_statement_parameters,
+)
 
 
 def test_strings_bind_verbatim_without_escaping():
@@ -215,3 +220,34 @@ def test_embeddings_for_accepts_an_already_parsed_vector_list():
     result = store.embeddings_for([_chunk()], spec)
 
     assert result[0].vector == (0.1, 0.2)
+
+
+def test_embeddings_for_reads_vectors_in_bounded_batches():
+    chunks = [
+        Chunk(
+            f"chunk-{i}", "doc-1", "v1", i, "text", (),
+            "https://docs.databricks.com/x", "X",
+        )
+        for i in range(EMBEDDING_READ_BATCH + 1)
+    ]
+    store = DatabricksStore.__new__(DatabricksStore)
+    store.namespace = "cat.sch"
+    calls = []
+
+    def execute(statement, timeout_seconds=300, *, parameters=None):
+        calls.append(parameters)
+        ids = json.loads(parameters["chunk_ids"])
+        return type("R", (), {
+            "rows": [[chunk_id, "2", [0.1, 0.2]] for chunk_id in ids]
+        })()
+
+    store.execute = execute
+    spec = EmbeddingSpec("model-a", "v1")
+
+    result = store.embeddings_for(chunks, spec)
+
+    assert len(calls) == 2
+    assert [len(json.loads(call["chunk_ids"])) for call in calls] == [
+        EMBEDDING_READ_BATCH, 1
+    ]
+    assert [item.chunk_id for item in result] == [chunk.chunk_id for chunk in chunks]
