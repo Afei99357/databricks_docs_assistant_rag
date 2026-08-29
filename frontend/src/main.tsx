@@ -64,7 +64,7 @@ function markdown(text: string, citations: Citation[]) {
   // The backend groups multiple citations sharing one sentence into a single
   // bracket, e.g. "[S3, S4]" -- render each label as its own separate link
   // instead of leaving the whole group unmatched/unlinked.
-  const withCitations = html.replace(/\[((?:S\d+)(?:\s*,\s*S\d+)*)\]/g, (match, group: string) => (
+  const withCitations = html.replace(/\[((?:S\d+)(?:\s*,\s*S\d+)*)\]/g, (_match, group: string) => (
     (group.match(/S\d+/g) ?? []).map((label) => (
       sourceLabels.has(label)
         ? `<a class="citation" href="#source-${label}" aria-label="Open ${label}">${label.slice(1)}</a>`
@@ -113,10 +113,12 @@ function Feedback({ answer }: { answer: Answer }) {
   const submit = async (nextRating: "up" | "down") => {
     setSaving(true);
     try {
-      await json("/api/feedback", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
-        rating: nextRating, question: answer.question, snapshot_id: answer.snapshot_id,
-        retrieved_chunk_ids: answer.retrieved_chunk_ids, latency_ms: answer.latency_ms, comment,
-      }) });
+      await json("/api/feedback", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+          rating: nextRating, question: answer.question, snapshot_id: answer.snapshot_id,
+          retrieved_chunk_ids: answer.retrieved_chunk_ids, latency_ms: answer.latency_ms, comment,
+        })
+      });
       setRating(nextRating);
     } catch {
       // A feedback failure must never interrupt an otherwise useful answer.
