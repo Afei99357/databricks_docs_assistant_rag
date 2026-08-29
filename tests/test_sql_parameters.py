@@ -168,3 +168,31 @@ def test_save_embeddings_does_nothing_for_an_empty_list():
     store.save_embeddings([])
 
     assert store.execute.__self__.calls == []
+
+
+def test_embeddings_for_parses_the_vector_column_from_its_json_string_form():
+    # The Statement Execution API's JSON_ARRAY format serializes ARRAY<FLOAT>
+    # as a JSON string of quoted numbers, e.g. '["0.1","0.2"]' -- not a parsed
+    # list. Iterating that string directly (the pre-fix code) reads it
+    # character by character and fails on the first character, "[".
+    rows = [["chunk-1", "2", '["0.1","0.2"]']]
+    store = DatabricksStore.__new__(DatabricksStore)
+    store.namespace = "cat.sch"
+    store.execute = Recorder(rows=rows).execute
+    spec = EmbeddingSpec("model-a", "v1")
+
+    result = store.embeddings_for([_chunk()], spec)
+
+    assert result[0].vector == (0.1, 0.2)
+
+
+def test_embeddings_for_accepts_an_already_parsed_vector_list():
+    rows = [["chunk-1", "2", [0.1, 0.2]]]
+    store = DatabricksStore.__new__(DatabricksStore)
+    store.namespace = "cat.sch"
+    store.execute = Recorder(rows=rows).execute
+    spec = EmbeddingSpec("model-a", "v1")
+
+    result = store.embeddings_for([_chunk()], spec)
+
+    assert result[0].vector == (0.1, 0.2)

@@ -381,7 +381,14 @@ class DatabricksStore:
             "AND array_contains(from_json(:chunk_ids,'array<string>'),chunk_id)",
             parameters={"model": spec.model, "revision": spec.revision, "chunk_ids": ids},
         ).rows
-        values = {str(row[0]): tuple(float(value) for value in row[2]) for row in rows}
+        def vector(value) -> tuple[float, ...]:
+            # Same API quirk handled for heading_path/source_origins elsewhere in
+            # this file: JSON_ARRAY format serializes ARRAY<FLOAT> as a JSON string
+            # of quoted numbers, not a parsed list.
+            parsed = json.loads(value) if isinstance(value, str) else value or ()
+            return tuple(float(item) for item in parsed)
+
+        values = {str(row[0]): vector(row[2]) for row in rows}
         missing = [chunk.chunk_id for chunk in chunks if chunk.chunk_id not in values]
         if missing:
             raise RuntimeError(f"missing compatible embeddings for {len(missing)} chunks")
