@@ -324,34 +324,52 @@ class DatabricksStore:
         return [chunk for chunk in chunks if chunk.chunk_id not in present]
 
     def save_embeddings(self, embeddings: list[StoredEmbedding]) -> None:
+        """Write vectors in batches instead of one DELETE+INSERT round trip per row.
+
+        A single multi-row INSERT binds 2 + 3*CHUNK_INSERT_BATCH parameters --
+        well under the measured 512-parameter ceiling -- and the matching
+        batched DELETE reuses the array_contains(from_json(...)) pattern
+        already used by missing_embeddings/embeddings_for.
+        """
         total = len(embeddings)
-        if total:
-            print(f"saving {total} embedding vectors to Delta...", flush=True)
-        for number, item in enumerate(embeddings, start=1):
-            self.execute(
-                f"DELETE FROM {self.namespace}.rag_chunk_embeddings WHERE chunk_id=:chunk_id "
-                "AND embedding_model=:model AND embedding_revision=:revision",
-                parameters={
-                    "chunk_id": item.chunk_id,
-                    "model": item.spec.model,
-                    "revision": item.spec.revision,
-                },
-            )
-            self.execute(
-                f"INSERT INTO {self.namespace}.rag_chunk_embeddings "
-                "(chunk_id,embedding_model,embedding_revision,embedding_dimension,vector,created_at) "
-                "VALUES (:chunk_id,:model,:revision,CAST(:dimension AS INT),"
-                "from_json(:vector,'array<float>'),current_timestamp())",
-                parameters={
-                    "chunk_id": item.chunk_id,
-                    "model": item.spec.model,
-                    "revision": item.spec.revision,
-                    "dimension": len(item.vector),
-                    "vector": json.dumps(item.vector),
-                },
-            )
-            if number % 100 == 0 or number == total:
-                print(f"saved {number}/{total} embedding vectors to Delta...", flush=True)
+        if not total:
+            return
+        print(f"saving {total} embedding vectors to Delta...", flush=True)
+        groups: dict[tuple[str, str], list[StoredEmbedding]] = {}
+        for item in embeddings:
+            groups.setdefault((item.spec.model, item.spec.revision), []).append(item)
+        saved = 0
+        for (model, revision), items in groups.items():
+            for start in range(0, len(items), CHUNK_INSERT_BATCH):
+                batch = items[start : start + CHUNK_INSERT_BATCH]
+                self.execute(
+                    f"DELETE FROM {self.namespace}.rag_chunk_embeddings "
+                    "WHERE embedding_model=:model AND embedding_revision=:revision "
+                    "AND array_contains(from_json(:chunk_ids,'array<string>'),chunk_id)",
+                    parameters={
+                        "model": model,
+                        "revision": revision,
+                        "chunk_ids": json.dumps([item.chunk_id for item in batch]),
+                    },
+                )
+                rows, parameters = [], {"model": model, "revision": revision}
+                for offset, item in enumerate(batch):
+                    n = f"r{offset}"
+                    rows.append(
+                        f"(:{n}_id,:model,:revision,CAST(:{n}_dim AS INT),"
+                        f"from_json(:{n}_vec,'array<float>'),current_timestamp())"
+                    )
+                    parameters[f"{n}_id"] = item.chunk_id
+                    parameters[f"{n}_dim"] = len(item.vector)
+                    parameters[f"{n}_vec"] = json.dumps(list(item.vector))
+                self.execute(
+                    f"INSERT INTO {self.namespace}.rag_chunk_embeddings "
+                    "(chunk_id,embedding_model,embedding_revision,embedding_dimension,vector,created_at) "
+                    "VALUES " + ",".join(rows),
+                    parameters=parameters,
+                )
+                saved += len(batch)
+                print(f"saved {saved}/{total} embedding vectors to Delta...", flush=True)
 
     def embeddings_for(self, chunks: list[Chunk], spec: EmbeddingSpec) -> list[StoredEmbedding]:
         if not chunks:
