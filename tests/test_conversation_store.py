@@ -1,5 +1,8 @@
+import json
+
 from rag.conversation import history_title
 from rag.storage.databricks import DatabricksStore
+from rag.storage.sqlite import SQLiteStore
 
 
 class Recorder:
@@ -43,3 +46,23 @@ def test_append_turn_rejects_a_conversation_the_owner_does_not_own():
     except PermissionError:
         return
     raise AssertionError("expected PermissionError")
+
+
+def test_sqlite_turn_preserves_the_original_citation_snapshot(tmp_path):
+    store = SQLiteStore(str(tmp_path / "history.sqlite"))
+    conversation_id = store.create_conversation("eric@example.com", "question")
+    answer = type("A", (), {
+        "text": "answer [S1]", "supported": True, "provider": "p", "snapshot_id": "s",
+    })()
+    citations = [{
+        "label": "S1", "title": "Original title", "url": "https://docs.databricks.com/original",
+        "excerpt": "The exact excerpt shown to the user.", "chunk_id": "chunk-1",
+    }]
+
+    store.append_turn(
+        "eric@example.com", conversation_id, question="question", resolved_query="question",
+        answer=answer, citation_ids=["chunk-1"], citations=citations, latency_ms=1,
+    )
+
+    row = store.turns_for("eric@example.com", conversation_id)[0]
+    assert json.loads(row[7]) == citations

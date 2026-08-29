@@ -1,3 +1,5 @@
+import json
+
 from rag.app.web import create_app
 from rag.llm.providers import ToolCall
 from rag.models import Chunk, RetrievalResult
@@ -23,7 +25,7 @@ class History:
     def turns_for(self, owner, conversation_id): return self.data.get(conversation_id, [])
     def append_turn(self, owner, conversation_id, **kwargs):
         self.resolved.append(kwargs["resolved_query"])
-        self.data.setdefault(conversation_id, []).append(("t", len(self.data.get(conversation_id, [])) + 1, kwargs["question"], kwargs["answer"].text, kwargs["answer"].supported, kwargs["answer"].snapshot_id, kwargs["citation_ids"], "today"))
+        self.data.setdefault(conversation_id, []).append(("t", len(self.data.get(conversation_id, [])) + 1, kwargs["question"], kwargs["answer"].text, kwargs["answer"].supported, kwargs["answer"].snapshot_id, kwargs["citation_ids"], json.dumps(kwargs["citations"]), "today"))
 
     def delete_conversation(self, owner, conversation_id):
         if conversation_id not in self.data: return False
@@ -105,6 +107,23 @@ def test_conversation_reuses_id_and_rewrites_follow_up():
     assert history.resolved == ["first question", "resolved follow-up"]
     assert client.get("/api/conversations").json["conversations"][0]["conversation_id"] == "c1"
     assert len(client.get("/api/conversations/c1/turns").json["turns"]) == 2
+
+
+def test_conversation_turns_return_the_original_citation_snapshot():
+    history = History()
+    chunk = Chunk("c", "d", "v", 0, "evidence", (), "https://docs.databricks.com/x", "Docs")
+    app = create_app(
+        retrieve=lambda _: [RetrievalResult(chunk, .9, "s")], provider=Provider(), threshold=.3,
+        history=history, identity=Identity(),
+    )
+    client = app.test_client()
+    conversation_id = client.post("/api/answer", json={"question": "test"}).json["conversation_id"]
+
+    turn = client.get(f"/api/conversations/{conversation_id}/turns").json["turns"][0]
+    assert turn["citations"] == [{
+        "label": "S1", "title": "Docs", "url": "https://docs.databricks.com/x",
+        "excerpt": "evidence", "chunk_id": "c",
+    }]
 
 
 def test_owner_can_remove_a_conversation_from_history():

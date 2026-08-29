@@ -22,6 +22,7 @@ Volume Content Search, AI Search, or Vector Search.
   - [Refresh or redeploy later](#5-refresh-or-redeploy-later)
 - [Chat model configuration](#chat-model-configuration)
 - [Operational boundaries](#operational-boundaries)
+- [Data tables](#data-tables)
 
 ## Current status
 
@@ -507,3 +508,28 @@ use the regular chat model for both retrieval reasoning and final answers.
 
 See [`scripts/README.md`](scripts/README.md) for manual operating commands and
 [`rag/evaluation_cases.yaml`](rag/evaluation_cases.yaml) for the benchmark questions.
+
+## Data tables
+
+SQLite mode stores these tables in `RAG_SQLITE_PATH`; Databricks mode stores the same logical
+tables as Delta tables in `RAG_CATALOG.RAG_SCHEMA`. The Delta definitions in
+[`sql/001_rag_schema.sql`](sql/001_rag_schema.sql) are the canonical schema. SQLite represents
+Delta arrays and vectors as JSON text; the column names and meanings remain the same.
+
+| Table | Purpose | Columns |
+| --- | --- | --- |
+| `rag_documents` | One record per discovered source page and its refresh/materialization state. | `doc_id`, `requested_url`, `canonical_url`, `resolved_url`*, `title`, `category`, `source_last_updated`, `source_content_hash`, `document_version`, `status`, `http_status`, `error_message`, `consecutive_404_count`, `retrieved_at`, `last_success_at`, `last_run_at`, `removed_at`, `source_origins`, `indexed_content_hash`, `indexed_source_last_updated`, `last_run_action`, `chunked_content_hash`, `chunked_source_last_updated`, `chunked_document_version` |
+| `rag_chunks` | Extracted, headed text chunks for indexed documents. | `chunk_id`, `doc_id`, `document_version`, `position`, `chunk_text`, `heading_path`, `source_url`, `source_title`, `embedding_model`, `embedding_dimension`, `embedding_created_at` |
+| `rag_chunk_embeddings` | Cached vectors for immutable chunks, keyed by embedding model and revision. | `chunk_id`, `embedding_model`, `embedding_revision`, `embedding_dimension`, `vector`, `created_at` |
+| `rag_index_snapshots` | Metadata and active-pointer state for published FAISS snapshots. | `snapshot_id`, `embedding_model`, `embedding_dimension`, `chunk_count`, `artifact_path`, `chunk_map_path`, `source_snapshot_at`, `created_at`, `status`, `active`, `validation_error`, `corpus_fingerprint`, `embedding_revision`, `chunking_revision` |
+| `rag_evaluations` | Results from the retrieval evaluation question set. | `evaluation_id`, `snapshot_id`, `question`, `expected_source_url`, `retrieved_chunk_ids`, `recall_at_k`, `source_correct`, `evaluator_notes`, `created_at` |
+| `rag_conversations` | Per-user conversation metadata, title, status, and timestamps. | `conversation_id`, `owner_user_id`, `title`, `status`, `created_at`, `updated_at`, `archived_at`, `deleted_at` |
+| `rag_conversation_turns` | Questions and grounded answers within a conversation; `citations_json` preserves the exact citation cards shown with the answer. | `turn_id`, `conversation_id`, `turn_number`, `user_question`, `resolved_query`, `answer_text`, `supported`, `provider`, `model`, `snapshot_id`, `citation_chunk_ids`, `citations_json`, `created_at`, `latency_ms` |
+| `rag_feedback` | Optional user ratings and comments about an answer. | `feedback_id`, `question`, `submitted_at`, `provider`, `model`, `snapshot_id`, `retrieved_chunk_ids`, `latency_ms`, `rating`, `comment` |
+| `rag_request_traces` | Per-request diagnostics: resolved query, model output, selected evidence, grounding status, and latency. | `trace_id`, `turn_id`, `conversation_id`, `owner_user_id`, `user_question`, `resolved_query`, `retrieval_queries`, `retrieval_status`, `selected_evidence_json`, `raw_model_output`, `parsed_citation_labels`, `fallback_reason`, `final_answer_text`, `supported`, `provider`, `model`, `snapshot_id`, `latency_ms`, `created_at` |
+| `rag_retrieval_traces` | Detailed retrieval-agent searches, selected chunks, and decisions for a request. | `trace_id`, `turn_id`, `search_number`, `search_query`, `retrieved_chunk_ids`, `selected_chunk_ids`, `agent_decision`, `created_at`, `latency_ms` |
+
+---
+
+\* `resolved_url` is currently present in the Delta schema only; SQLite does not need it for the
+local refresh path.

@@ -23,6 +23,17 @@ STARTER_QUESTIONS = [
 ]
 
 
+def _stored_citations(serialized) -> list[dict]:
+    """Return a durable citation snapshot, tolerating turns recorded before it existed."""
+    if not serialized:
+        return []
+    try:
+        value = json.loads(serialized)
+    except (TypeError, json.JSONDecodeError):
+        return []
+    return value if isinstance(value, list) else []
+
+
 def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, threshold: float,
                history=None, identity=None, diagnostics=None,
                trace_getter: Callable[[], object | None] | None = None,
@@ -51,8 +62,16 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         turn_id = None
         if history and identity:
             conversation_id = conversation_id or history.create_conversation(owner, question)
-            turn_id = history.append_turn(owner, conversation_id, question=question, resolved_query=resolved_query, answer=result,
-                                          citation_ids=[item.chunk_id for item in result.citations], latency_ms=round((perf_counter() - started) * 1000))
+            turn_id = history.append_turn(
+                owner,
+                conversation_id,
+                question=question,
+                resolved_query=resolved_query,
+                answer=result,
+                citation_ids=[item.chunk_id for item in result.citations],
+                citations=[asdict(item) for item in result.citations],
+                latency_ms=round((perf_counter() - started) * 1000),
+            )
         if diagnostics:
             try:
                 diagnostics.record_request_trace(
@@ -122,7 +141,15 @@ def create_app(*, retrieve: Callable[[str], list[RetrievalResult]], provider, th
         if not history or not identity: return jsonify({"turns": []})
         owner = identity.current_user_id(request)
         rows = history.turns_for(owner, conversation_id)
-        return jsonify({"turns": [{"turn_id": row[0], "turn_number": row[1], "question": row[2], "answer": row[3], "supported": row[4], "snapshot_id": row[5], "citation_chunk_ids": row[6], "created_at": row[7]} for row in rows]})
+        return jsonify({"turns": [
+            {
+                "turn_id": row[0], "turn_number": row[1], "question": row[2], "answer": row[3],
+                "supported": row[4], "snapshot_id": row[5], "citation_chunk_ids": row[6],
+                "citations": _stored_citations(row[7]) if len(row) > 8 else [],
+                "created_at": row[8] if len(row) > 8 else row[7],
+            }
+            for row in rows
+        ]})
 
     @app.delete("/api/conversations/<conversation_id>")
     def delete_conversation(conversation_id):

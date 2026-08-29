@@ -4,7 +4,7 @@ import DOMPurify from "dompurify";
 import { marked } from "marked";
 import "./styles.css";
 
-type Citation = { label: string; title: string; url: string; excerpt: string };
+type Citation = { label: string; title: string; url: string; excerpt: string; chunk_id?: string };
 type Answer = {
   question: string;
   answer: string;
@@ -28,7 +28,13 @@ type Conversation = {
   title: string;
   updated_at: string;
 };
-type Turn = { turn_id: string; question: string; answer: string };
+type Turn = {
+  turn_id: string;
+  question: string;
+  answer: string;
+  citations: Citation[];
+  snapshot_id?: string;
+};
 type Message = { role: "user" | "assistant"; content: string; answer?: Answer };
 
 const STARTERS = [
@@ -352,7 +358,16 @@ function App() {
       setMessages(
         body.turns.flatMap((turn) => [
           { role: "user" as const, content: turn.question },
-          { role: "assistant" as const, content: turn.answer },
+          {
+            role: "assistant" as const,
+            content: turn.answer,
+            answer: {
+              question: turn.question,
+              answer: turn.answer,
+              citations: turn.citations || [],
+              snapshot_id: turn.snapshot_id,
+            },
+          },
         ]),
       );
       setHistoryOpen(false);
