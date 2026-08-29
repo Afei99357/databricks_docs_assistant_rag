@@ -142,10 +142,6 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
 | `RAG_RELEVANCE_THRESHOLD` | Minimum grounding/relevance score required before the UI returns an answer. |
 | `RAG_LOCAL_TEST_USER_ID` | Local identity used to scope conversation history in the browser. |
 
-`RAG_AGENT_BASE_URL`, `RAG_AGENT_MODEL`, and `RAG_AGENT_API_KEY` are optional advanced
-overrides for using a different model for retrieval reasoning. Leave all three unset to use
-the regular `RAG_CHAT_*` model for both reasoning and final answers.
-
 While developing, `just check` runs what CI runs — `ruff` followed by the test suite. Its two
 halves are also available on their own, and `just test` forwards any arguments to `pytest`:
 
@@ -466,7 +462,7 @@ while the user token is used only to resolve the signed-in Databricks user.
 ## Chat model configuration
 
 Local and Databricks deployments configure chat models differently. In both cases, the
-retrieval agent and final answer use the same model unless `RAG_AGENT_*` overrides are set.
+retrieval agent and final answer use the same configured chat model.
 
 ### Local server
 
@@ -489,8 +485,7 @@ the deployed App does not read the local `RAG_CHAT_BASE_URL`, `RAG_CHAT_MODEL`, 
 `RAG_CHAT_API_KEY` values.
 
 `OPENAI_*` and `OLLAMA_MODEL` remain accepted as compatibility aliases, but new configurations
-should use `RAG_CHAT_*`. `RAG_AGENT_*` is an advanced override only—leave all three unset to
-use the regular chat model for both retrieval reasoning and final answers.
+should use `RAG_CHAT_*`.
 
 ## Operational boundaries
 

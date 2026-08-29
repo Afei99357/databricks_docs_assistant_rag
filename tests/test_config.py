@@ -5,7 +5,6 @@ def test_volume_path_uses_catalog_and_schema_path_segments():
     settings = Settings(
         "catalog", "schema", "warehouse", "artifacts", "embedding", 10, 0.35,
         "http://localhost", "model", None, "http://localhost", None,
-        None, None, None,
     )
 
     assert settings.volume_path == "/Volumes/catalog/schema/artifacts"

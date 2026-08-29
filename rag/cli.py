@@ -59,26 +59,17 @@ def _local_stack(settings: Settings):
     provider = OpenAICompatibleProvider(
         settings.chat_base_url, settings.chat_model, api_key=settings.chat_api_key or "local"
     )
-    if bool(settings.agent_base_url) != bool(settings.agent_model):
-        raise ValueError("set both RAG_AGENT_BASE_URL and RAG_AGENT_MODEL, or neither")
-    agent_provider = (
-        OpenAICompatibleProvider(
-            settings.agent_base_url, settings.agent_model, api_key=settings.agent_api_key or "local"
-        )
-        if settings.agent_base_url
-        else provider
-    )
-    return ActiveSnapshotRetriever(root, embedder), provider, agent_provider
+    return ActiveSnapshotRetriever(root, embedder), provider
 
 
 def evaluate(mode: str) -> None:
     """Run the question battery and print the per-case table."""
     settings = Settings.from_env()
-    retriever, _provider, agent_provider = _local_stack(settings)
+    retriever, provider = _local_stack(settings)
     retrieve = (
         retriever.retrieve
         if mode == "plain"
-        else RetrievalAgent(retriever, agent_provider).retrieve
+        else RetrievalAgent(retriever, provider).retrieve
     )
     cases = load_cases()
     print(f"evaluating {len(cases)} questions against {mode} retrieval", flush=True)
@@ -96,7 +87,7 @@ def evaluate(mode: str) -> None:
 
 def serve() -> None:
     settings = Settings.from_env()
-    retriever, provider, agent_provider = _local_stack(settings)
+    retriever, provider = _local_stack(settings)
     from rag.app.web import create_app
     from rag.storage import create_store
 
@@ -104,11 +95,11 @@ def serve() -> None:
         settings,
         provider=provider.name,
         model=provider.model,
-        agent_provider=agent_provider.name,
-        agent_model=agent_provider.model,
+        agent_provider=provider.name,
+        agent_model=provider.model,
     )
     agent = RetrievalAgent(
-        retriever, agent_provider, candidates_per_search=settings.agent_candidates_per_search
+        retriever, provider, candidates_per_search=settings.agent_candidates_per_search
     )
     identity = LocalTestIdentityProvider()
     create_app(
