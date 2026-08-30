@@ -41,6 +41,14 @@ def test_low_relevance_refuses_without_calling_provider():
     answer = answer_groundedly("Unknown", [_result(0.1)], FakeProvider("unsafe"), threshold=0.3)
     assert not answer.supported
     assert "could not verify" in answer.text
+    assert answer.citations == ()
+
+
+def test_no_results_refuses_without_citations():
+    answer = answer_groundedly("Unknown", [], FakeProvider("unsafe"), threshold=0.3)
+
+    assert not answer.supported
+    assert answer.citations == ()
 
 
 def test_grounded_answer_renumbers_cited_sources_without_gaps():
@@ -84,5 +92,16 @@ def test_grounding_trace_records_uncited_model_fallback_reason():
         "What is Genie?", [_result()], FakeProvider("I cannot verify this."), threshold=0.3
     )
     assert not answer.supported
+    assert answer.citations == ()
     assert trace.raw_model_output == "I cannot verify this."
     assert trace.fallback_reason == "no_citations_in_model_output"
+
+
+def test_invalid_model_citation_refuses_without_citations():
+    answer, trace = answer_groundedly_with_trace(
+        "What is Genie?", [_result()], FakeProvider("Unsupported [S99]."), threshold=0.3
+    )
+
+    assert not answer.supported
+    assert answer.citations == ()
+    assert trace.fallback_reason == "invalid_citation_labels"

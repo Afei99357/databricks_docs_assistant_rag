@@ -113,7 +113,7 @@ def answer_groundedly_with_trace(
     if not results:
         return Answer(
             "I could not verify this from the indexed documentation.",
-            citations,
+            (),
             False,
             provider.name,
             snapshot_id,
@@ -121,7 +121,7 @@ def answer_groundedly_with_trace(
     if results[0].score < threshold:
         return Answer(
             "I could not verify this from the indexed documentation.",
-            citations,
+            (),
             False,
             provider.name,
             snapshot_id,
@@ -145,7 +145,7 @@ def answer_groundedly_with_trace(
     if not labels:
         return Answer(
             "I could not verify this from the indexed documentation.",
-            citations,
+            (),
             False,
             provider.name,
             snapshot_id,
@@ -153,7 +153,7 @@ def answer_groundedly_with_trace(
     if not valid_labels:
         return Answer(
             "I could not verify this from the indexed documentation.",
-            citations,
+            (),
             False,
             provider.name,
             snapshot_id,
