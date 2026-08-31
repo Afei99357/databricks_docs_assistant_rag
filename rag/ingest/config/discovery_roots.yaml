@@ -1,5 +1,5 @@
-# Automatic, bounded discovery roots. Each root stays on docs.databricks.com
-# and only follows URLs within its explicit path family.
+# Automatic, bounded discovery roots. Each root selects only URLs in its
+# explicit path family from the official Databricks documentation sitemap.
 - id: get-started
   url: https://docs.databricks.com/aws/en/getting-started/
   allowed_path_prefixes:
@@ -37,6 +37,12 @@
   url: https://docs.databricks.com/aws/en/ai-bi/
   allowed_path_prefixes:
     - /aws/en/ai-bi/
+  category: ai-bi
+  max_pages: 250
+- id: dashboards
+  url: https://docs.databricks.com/aws/en/dashboards/
+  allowed_path_prefixes:
+    - /aws/en/dashboards/
   category: ai-bi
   max_pages: 250
 - id: architecture

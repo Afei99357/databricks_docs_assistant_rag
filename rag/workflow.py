@@ -18,7 +18,13 @@ from rag.index.service import (
 from rag.ingest.fetch import fetch_page
 from rag.ingest.lifecycle import REMOVAL_THRESHOLD
 from rag.ingest.pipeline import ingest_source
-from rag.ingest.sources import CuratedDoc, discover_root, load_curated_docs, load_discovery_roots
+from rag.ingest.sources import (
+    CuratedDoc,
+    discover_root,
+    load_curated_docs,
+    load_discovery_roots,
+    load_sitemap_urls,
+)
 from rag.models import Chunk, Document, EmbeddingSpec, StoredEmbedding
 from rag.storage.protocol import ArtifactPublisher, CorpusStore, EmbeddingStore
 
@@ -45,17 +51,19 @@ class RefreshResult:
 
 
 def official_sources() -> list[CuratedDoc]:
-    """Load recursive roots and manual supplements, preserving every origin."""
+    """Load sitemap-selected roots and manual supplements, preserving every origin."""
     config_dir = Path(__file__).parent / "ingest/config"
     sources: dict[str, CuratedDoc] = {}
     roots = load_discovery_roots(config_dir / "discovery_roots.yaml")
+    print("Downloading official documentation sitemap...", flush=True)
+    sitemap_urls = load_sitemap_urls(fetch_page)
     for number, root in enumerate(roots, start=1):
-        print(f"[{number}/{len(roots)}] Discovering {root.root_id} documentation...", flush=True)
+        print(f"[{number}/{len(roots)}] Selecting {root.root_id} sitemap URLs...", flush=True)
         for source in discover_root(
             root,
-            fetch_page,
+            sitemap_urls,
             on_progress=lambda count, number=number, root_id=root.root_id: print(
-                f"[{number}/{len(roots)}] Discovered {count} {root_id} pages...", flush=True
+                f"[{number}/{len(roots)}] Selected {count} {root_id} sitemap URLs...", flush=True
             ),
         ):
             sources[source.doc_id] = source
