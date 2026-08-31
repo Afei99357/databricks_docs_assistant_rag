@@ -126,6 +126,20 @@ def test_conversation_turns_return_the_original_citation_snapshot():
     }]
 
 
+def test_unsupported_turn_stores_no_citations():
+    history = History()
+    chunk = Chunk("c", "d", "v", 0, "unrelated", (), "https://docs.databricks.com/x", "Docs")
+    app = create_app(
+        retrieve=lambda _: [RetrievalResult(chunk, .1, "s")], provider=Provider(), threshold=.3,
+        history=history, identity=Identity(),
+    )
+    client = app.test_client()
+    conversation_id = client.post("/api/answer", json={"question": "test"}).json["conversation_id"]
+
+    turn = client.get(f"/api/conversations/{conversation_id}/turns").json["turns"][0]
+    assert turn["citations"] == []
+
+
 def test_owner_can_remove_a_conversation_from_history():
     history = History(); history.data["c1"] = []
     app = create_app(retrieve=lambda _: [], provider=Provider(), threshold=.3, history=history, identity=Identity())
