@@ -23,6 +23,7 @@ Volume Content Search, AI Search, or Vector Search.
 - [Chat model configuration](#chat-model-configuration)
 - [Operational boundaries](#operational-boundaries)
 - [Data tables](#data-tables)
+- [License](#license)
 
 ## Current status
 
@@ -551,3 +552,7 @@ Delta arrays and vectors as JSON text; the column names and meanings remain the 
 
 \* `resolved_url` is currently present in the Delta schema only; SQLite does not need it for the
 local refresh path.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
