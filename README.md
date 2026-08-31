@@ -6,6 +6,8 @@ feedback, evaluation results, and immutable index artifacts, or SQLite for a ful
 It does not use Genie Agent,
 Volume Content Search, AI Search, or Vector Search.
 
+Read the [technical case study and architecture walkthrough](https://liaoyunfei.name/1._Agentic_Databricks_Documentation_Assistant/).
+
 ## Contents
 
 - [Current status](#current-status)
