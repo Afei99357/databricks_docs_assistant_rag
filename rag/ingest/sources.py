@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from xml.etree import ElementTree
 
 import yaml
 from bs4 import BeautifulSoup
@@ -51,6 +51,7 @@ TRACKING_PARAMS = {
 }
 SLUG_STRIP_PREFIXES = ("aws-en-", "gcp-en-", "api-workspace-")
 GENIE_LANDING_URL = "https://docs.databricks.com/aws/en/genie/"
+AWS_EN_SITEMAP_URL = "https://docs.databricks.com/aws/en/sitemap.xml"
 
 
 class SourcesValidationError(ValueError):
@@ -71,7 +72,7 @@ class CuratedDoc:
 
 @dataclass(frozen=True)
 class DiscoveryRoot:
-    """A bounded official-documentation crawl boundary."""
+    """A bounded official-documentation sitemap boundary."""
 
     root_id: str
     landing_url: str
@@ -159,34 +160,74 @@ def _allowed_discovery_url(url: str, root: DiscoveryRoot) -> bool:
     )
 
 
+def load_sitemap_urls(
+    fetch_text: Callable[[str, str], object], *, sitemap_url: str = AWS_EN_SITEMAP_URL
+) -> list[str]:
+    """Load the official sitemap once and return its canonical documentation URLs.
+
+    The crawler must fail closed here. An unavailable or malformed sitemap cannot
+    be interpreted as every configured page having disappeared.
+    """
+    result = fetch_text("official-sitemap", sitemap_url)
+    if getattr(result, "outcome", None) != "ok" or not getattr(result, "html", None):
+        raise RuntimeError(
+            "official sitemap fetch failed: "
+            + str(getattr(result, "error_message", "unknown error"))
+        )
+    try:
+        root = ElementTree.fromstring(result.html)
+    except ElementTree.ParseError as exc:
+        raise RuntimeError("official sitemap is not valid XML") from exc
+
+    urls, seen = [], set()
+    for element in root:
+        if element.tag.rsplit("}", 1)[-1] != "url":
+            continue
+        location = next(
+            (
+                child.text
+                for child in element
+                if child.tag.rsplit("}", 1)[-1] == "loc" and child.text
+            ),
+            None,
+        )
+        if not location:
+            continue
+        canonical = canonicalize_url(location)
+        parts = urlsplit(canonical)
+        if parts.scheme != "https" or parts.netloc != "docs.databricks.com" or canonical in seen:
+            continue
+        seen.add(canonical)
+        urls.append(canonical)
+    if not urls:
+        raise RuntimeError("official sitemap contains no Databricks documentation URLs")
+    return urls
+
+
 def discover_root(
     root: DiscoveryRoot,
-    fetch_html: Callable[[str, str], object],
+    sitemap_urls: list[str],
     *,
     on_progress: Callable[[int], None] | None = None,
 ) -> list[CuratedDoc]:
-    """Recursively discover one configured root without leaving its boundary.
-
-    ``fetch_html`` intentionally accepts the same ``doc_id, url`` shape as the
-    ingestion fetcher, which keeps this policy testable without live HTTP.
-    """
-    queue = deque([root.landing_url])
-    seen = {root.landing_url}
-    docs: list[CuratedDoc] = []
-    while queue:
-        url = queue.popleft()
-        result = fetch_html(compute_doc_id(url), url)
-        # Documentation navigation can briefly retain links to removed pages.
-        # A linked 404 is not evidence that the root itself is invalid, so skip
-        # it and continue discovering the rest of the bounded family. The
-        # landing page remains strict: a missing configured root is an operator
-        # configuration error and must stop the refresh.
-        if getattr(result, "outcome", None) == "not_found" and url != root.landing_url:
+    """Select one configured, bounded path family from the official sitemap."""
+    selected, seen = [], set()
+    for sitemap_url in sitemap_urls:
+        url = canonicalize_url(sitemap_url)
+        if not _allowed_discovery_url(url, root) or url in seen:
             continue
-        if getattr(result, "outcome", None) != "ok" or not getattr(result, "html", None):
-            raise RuntimeError(
-                f"discovery root {root.root_id!r} failed at {url}: {getattr(result, 'error_message', 'unknown error')}"
-            )
+        seen.add(url)
+        selected.append(url)
+    if not selected:
+        raise RuntimeError(f"discovery root {root.root_id!r} has no matching sitemap URLs")
+    if len(selected) > root.max_pages:
+        raise RuntimeError(
+            f"discovery root {root.root_id!r} exceeds its {root.max_pages}-page limit "
+            f"with {len(selected)} sitemap URLs"
+        )
+
+    docs: list[CuratedDoc] = []
+    for url in selected:
         category = _genie_category(url) if root.root_id == "genie" else root.category
         docs.append(
             CuratedDoc(
@@ -196,25 +237,12 @@ def discover_root(
                 compute_slug(url),
                 category,
                 "aws",
-                f"Automatically discovered from {root.root_id}",
-                f"discovered:{root.root_id}",
+                f"Selected from the official sitemap for {root.root_id}",
+                f"sitemap:{root.root_id}",
             )
         )
         if on_progress and (len(docs) == 1 or len(docs) % 25 == 0):
             on_progress(len(docs))
-        for anchor in BeautifulSoup(result.html, "lxml").find_all("a", href=True):
-            href = anchor["href"]
-            if href.startswith("#"):
-                continue
-            candidate = canonicalize_url(urljoin(url, href))
-            if not _allowed_discovery_url(candidate, root) or candidate in seen:
-                continue
-            if len(seen) >= root.max_pages:
-                raise RuntimeError(
-                    f"discovery root {root.root_id!r} exceeds its {root.max_pages}-page limit"
-                )
-            seen.add(candidate)
-            queue.append(candidate)
     if on_progress and len(docs) > 1 and len(docs) % 25:
         on_progress(len(docs))
     return docs

@@ -165,8 +165,9 @@ just lint
 just test tests/test_sources.py
 ```
 
-`just discover` fetches and lists the official source URLs without ingesting them, which is the
-cheap way to see what the configured roots and supplements currently resolve to.
+`just discover` downloads the official documentation sitemap and lists the source URLs selected
+by the configured path roots and manual supplements, without ingesting them. It is the cheap way
+to verify source coverage before a refresh.
 
 `just check` runs the SQLite behavioural contract suite for the storage protocols
 (conversation round-tripping, owner isolation, delete-twice semantics). The same suite also
@@ -464,12 +465,13 @@ applies idempotent schema creation, and none of these commands crawl sources, cr
 replace the active FAISS snapshot. If the App is stopped, use `just app-start` after `just app-deploy`
 instead of `just app-publish`.
 
-The normal documentation refresh above recursively checks the bounded official roots in
-`rag/ingest/config/discovery_roots.yaml` and the manual supplement list. Unchanged sources do not
-create embeddings or a new snapshot. A changed corpus creates a validated immutable snapshot and
-atomically marks it active; the previous active snapshot remains usable if refresh or publication
-fails. A direct 404, or removal from the configured source lists, must be confirmed in three runs
-before a page is removed.
+The normal documentation refresh downloads the official sitemap once, then selects the bounded
+path families configured in `rag/ingest/config/discovery_roots.yaml`, along with the manual
+supplement list. This covers pages that appear in the documentation sidebar or sitemap even when
+they are not linked from a root landing page. Unchanged sources do not create embeddings or a new
+snapshot. A changed corpus creates a validated immutable snapshot and atomically marks it active;
+the previous active snapshot remains usable if refresh or publication fails. A direct 404, or
+removal from the configured source lists, must be confirmed in three runs before a page is removed.
 
 For an ingestion change, redeploy the bootstrap Bundle and run its Workflow. For an App-code
 change, deploy App code. Do both only when both kinds of change are present. Do not rebuild a local

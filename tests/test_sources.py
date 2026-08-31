@@ -10,6 +10,7 @@ from rag.ingest.sources import (
     discover_root,
     load_curated_docs,
     load_discovery_roots,
+    load_sitemap_urls,
 )
 
 
@@ -67,87 +68,105 @@ def test_discovery_roots_are_bounded_and_configured():
         "agents",
         "machine-learning",
         "ai-bi",
+        "dashboards",
         "get-started",
         "architecture",
     }
     assert all(root.max_pages == 250 for root in roots)
 
 
-def test_recursive_discovery_stays_in_its_allowed_path_family():
-    root = DiscoveryRoot(
-        "test", "https://docs.databricks.com/aws/en/test", ("/aws/en/test",), "genie-concepts", 3
-    )
-
+def test_sitemap_loader_keeps_only_canonical_databricks_documentation_urls():
     class Result:
         outcome, error_message = "ok", None
+        html = """<?xml version="1.0"?>
+        <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+          <url><loc>https://docs.databricks.com/aws/en/ai-bi/admin/themes/</loc></url>
+          <url><loc>https://docs.databricks.com/aws/en/ai-bi/admin/themes/</loc></url>
+          <url><loc>https://docs.databricks.com/gcp/en/ai-bi/admin/themes</loc></url>
+          <url><loc>https://example.com/not-a-doc</loc></url>
+        </urlset>"""
 
-        def __init__(self, html):
-            self.html = html
+    urls = load_sitemap_urls(lambda _doc_id, _url: Result())
 
-    pages = {
-        "https://docs.databricks.com/aws/en/test": '<a href="/aws/en/test/one">One</a><a href="/aws/en/other">No</a>',
-        "https://docs.databricks.com/aws/en/test/one": '<a href="/aws/en/test/two">Two</a>',
-        "https://docs.databricks.com/aws/en/test/two": "<article>Done</article>",
-    }
-    docs = discover_root(root, lambda _doc_id, url: Result(pages[url]))
-    assert [doc.canonical_requested_url for doc in docs] == list(pages)
-
-
-def test_recursive_discovery_reports_initial_and_final_progress():
-    root = DiscoveryRoot(
-        "test", "https://docs.databricks.com/aws/en/test", ("/aws/en/test",), "genie-concepts", 3
-    )
-
-    class Result:
-        outcome, error_message = "ok", None
-
-        def __init__(self, html):
-            self.html = html
-
-    pages = {
-        "https://docs.databricks.com/aws/en/test": '<a href="/aws/en/test/one">One</a>',
-        "https://docs.databricks.com/aws/en/test/one": "<article>Done</article>",
-    }
-    progress = []
-
-    discover_root(root, lambda _doc_id, url: Result(pages[url]), on_progress=progress.append)
-
-    assert progress == [1, 2]
-
-
-def test_recursive_discovery_skips_a_linked_not_found_page():
-    root = DiscoveryRoot(
-        "test", "https://docs.databricks.com/aws/en/test", ("/aws/en/test",), "genie-concepts", 3
-    )
-
-    class Result:
-        def __init__(self, outcome, html=None):
-            self.outcome, self.html = outcome, html
-            self.error_message = "HTTP 404" if outcome == "not_found" else None
-
-    pages = {
-        "https://docs.databricks.com/aws/en/test": Result(
-            "ok", '<a href="/aws/en/test/missing">Missing</a><a href="/aws/en/test/live">Live</a>'
-        ),
-        "https://docs.databricks.com/aws/en/test/missing": Result("not_found"),
-        "https://docs.databricks.com/aws/en/test/live": Result("ok", "<article>Live</article>"),
-    }
-
-    docs = discover_root(root, lambda _doc_id, url: pages[url])
-    assert [doc.canonical_requested_url for doc in docs] == [
-        "https://docs.databricks.com/aws/en/test",
-        "https://docs.databricks.com/aws/en/test/live",
+    assert urls == [
+        "https://docs.databricks.com/aws/en/ai-bi/admin/themes",
+        "https://docs.databricks.com/gcp/en/ai-bi/admin/themes",
     ]
 
 
-def test_recursive_discovery_fails_at_the_configured_page_cap():
+def test_sitemap_loader_fails_closed_when_the_sitemap_cannot_be_fetched():
+    class Result:
+        outcome, html, error_message = "network_error", None, "connection reset"
+
+    with pytest.raises(RuntimeError, match="official sitemap fetch failed"):
+        load_sitemap_urls(lambda _doc_id, _url: Result())
+
+
+def test_sitemap_loader_fails_closed_when_the_sitemap_is_malformed():
+    class Result:
+        outcome, error_message = "ok", None
+        html = "<urlset><url><loc>https://docs.databricks.com/aws/en/ai-bi</loc></urlset>"
+
+    with pytest.raises(RuntimeError, match="official sitemap is not valid XML"):
+        load_sitemap_urls(lambda _doc_id, _url: Result())
+
+
+def test_sitemap_discovery_stays_in_its_allowed_path_family():
+    root = DiscoveryRoot(
+        "test", "https://docs.databricks.com/aws/en/test", ("/aws/en/test",), "genie-concepts", 3
+    )
+    sitemap_urls = [
+        "https://docs.databricks.com/aws/en/test",
+        "https://docs.databricks.com/aws/en/test/one",
+        "https://docs.databricks.com/aws/en/other",
+    ]
+    progress = []
+
+    docs = discover_root(root, sitemap_urls, on_progress=progress.append)
+
+    assert [doc.canonical_requested_url for doc in docs] == sitemap_urls[:2]
+    assert progress == [1, 2]
+    assert {doc.source_scope for doc in docs} == {"sitemap:test"}
+
+
+def test_sitemap_discovery_covers_ai_bi_admin_and_dashboard_families():
+    sitemap_urls = [
+        "https://docs.databricks.com/aws/en/ai-bi/admin/themes",
+        "https://docs.databricks.com/aws/en/ai-bi/admin/use-apis",
+        "https://docs.databricks.com/aws/en/dashboards/",
+    ]
+    ai_bi = DiscoveryRoot(
+        "ai-bi", "https://docs.databricks.com/aws/en/ai-bi/", ("/aws/en/ai-bi/",), "ai-bi", 250
+    )
+    dashboards = DiscoveryRoot(
+        "dashboards", "https://docs.databricks.com/aws/en/dashboards/", ("/aws/en/dashboards/",), "ai-bi", 250
+    )
+
+    assert [doc.canonical_requested_url for doc in discover_root(ai_bi, sitemap_urls)] == sitemap_urls[:2]
+    assert [doc.canonical_requested_url for doc in discover_root(dashboards, sitemap_urls)] == [
+        "https://docs.databricks.com/aws/en/dashboards"
+    ]
+
+
+def test_every_configured_root_has_a_selectable_sitemap_scope():
+    path = Path(__file__).parents[1] / "rag/ingest/config/discovery_roots.yaml"
+    roots = load_discovery_roots(path)
+
+    for root in roots:
+        sitemap_url = f"https://docs.databricks.com{root.allowed_path_prefixes[0].rstrip('/')}/coverage"
+        assert discover_root(root, [sitemap_url])
+
+
+def test_sitemap_discovery_fails_at_the_configured_page_cap():
     root = DiscoveryRoot(
         "test", "https://docs.databricks.com/aws/en/test", ("/aws/en/test",), "genie-concepts", 1
     )
 
-    class Result:
-        outcome, error_message = "ok", None
-        html = '<a href="/aws/en/test/one">One</a>'
-
     with pytest.raises(RuntimeError, match="1-page limit"):
-        discover_root(root, lambda _doc_id, _url: Result())
+        discover_root(
+            root,
+            [
+                "https://docs.databricks.com/aws/en/test",
+                "https://docs.databricks.com/aws/en/test/one",
+            ],
+        )
