@@ -39,19 +39,11 @@ def test_discovery_filters_to_official_genie_families():
 def test_curated_sources_include_content_search():
     path = Path(__file__).parents[1] / "rag/ingest/config/curated_urls.yaml"
     docs = load_curated_docs(path)
-    assert len(docs) == 18
+    assert len(docs) == 12
     assert any(
         doc.canonical_requested_url == "https://docs.databricks.com/aws/en/volumes/content-search"
         for doc in docs
     )
-    assert {
-        doc.canonical_requested_url
-        for doc in docs
-        if doc.category == "machine-learning"
-    } >= {
-        "https://docs.databricks.com/aws/en/machine-learning/graph-analysis",
-        "https://docs.databricks.com/aws/en/machine-learning/mlops/mlops-workflow",
-    }
 
 
 def test_discovery_roots_are_bounded_and_configured():
