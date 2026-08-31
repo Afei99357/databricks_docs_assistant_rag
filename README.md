@@ -124,6 +124,20 @@ to list them. The recipes load `.env` themselves, so no `set -a` / `source` step
    just serve
    ```
 
+### Later local changes: choose the matching command
+
+The steps above are the first-time local setup. Later, keep `.env` configured for `sqlite` and
+choose one row below.
+
+| What changed or happened? | Run | What does not happen |
+| --- | --- | --- |
+| Routine documentation refresh, new discovery roots, or new curated URLs | `just index` | Unchanged pages are not re-chunked or re-embedded. |
+| Indexing stopped after chunks were saved | `just resume-snapshot` | No source fetch or re-chunking; only missing vectors are embedded. |
+| Local FAISS artifacts need replacement and all compatible vectors already exist | `just rebuild-index` | No fetch, parsing, or embedding. |
+| Chunking logic/configuration changed, or stored chunks need repair | Run `just repair-chunks`; increment `RAG_CHUNKING_REVISION` first only when chunking behavior changed | This is intentionally a full re-chunk and re-embed, not a routine refresh. |
+| Python server code changed | Stop the current server, then run `just serve` | No source refresh or snapshot rebuild. |
+| Frontend source changed | `just frontend`, then restart with `just serve` | No source refresh or snapshot rebuild. |
+
 ### Local configuration reference
 
 | Variable | Purpose |
