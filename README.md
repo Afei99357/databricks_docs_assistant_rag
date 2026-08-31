@@ -293,7 +293,7 @@ If the catalog/schema differs from `eliao.genie_kb`, update the three correspond
 [`app.yml`](app.yml) before creating the App: `RAG_CATALOG`, `RAG_SCHEMA`, and
 `RAG_ARTIFACT_VOLUME`.
 
-### 2. Upload the project source
+### 2. First deployment: create the refresh Workflow
 
 From the repository root, validate and synchronize the source files to the target workspace:
 
@@ -301,10 +301,10 @@ From the repository root, validate and synchronize the source files to the targe
 just bootstrap-deploy
 ```
 
-This deploys the Job-only bootstrap Bundle and uploads all needed project files. It creates the
-Workflow `databricks-docs-rag-refresh-dev`.
+This deploys the Job-only bootstrap Bundle, uploads the Job source, and creates the
+`databricks-docs-rag-refresh-dev` Workflow.
 
-### 3. Create and run the bootstrap Workflow
+### 3. First deployment: build the initial App snapshot
 
 After deployment, run the Bundle-managed Workflow from **Workflows**, or run:
 
@@ -312,14 +312,8 @@ After deployment, run the Bundle-managed Workflow from **Workflows**, or run:
 just bootstrap-run
 ```
 
-To force a full re-chunk and App-snapshot rebuild after a storage/chunking upgrade, use:
-
-```bash
-just bootstrap-repair
-```
-
-This passes `repair_chunks=true` to the Workflow. `just` loads the project `.env`, so no
-`set -a` / `source` commands are needed.
+`just` reads the single project `.env` file automatically. For Databricks commands, that file
+must contain the Databricks values shown above; do not leave it configured for local SQLite mode.
 
 Wait for success. This idempotently creates the catalog, schema, all Delta
 tables, and Volume; refreshes the configured sources; and writes the active App snapshot under
@@ -328,20 +322,19 @@ tables, and Volume; refreshes the configured sources; and writes the active App 
 For a brand-new workspace, the Job must run first: the App's resource bindings cannot be created
 until its tables and Volume exist.
 
-### 4. Create and deploy the App
+### 4. First deployment: create, start, and publish the App
 
-Deploy the App-only Bundle after the bootstrap run succeeds. This Bundle pins
+After the Workflow succeeds, build the browser assets and deploy the App-only Bundle. This Bundle pins
 the Terraform deployment engine as a compatibility workaround for a current
 Databricks CLI direct-engine crash when creating Apps with resource bindings:
 
 ```bash
+just frontend
 just app-deploy
 ```
 
 The Bundle uploads the source and creates the App with its resource bindings.
-For the first deployment in a workspace, start the new App and create its code
-deployment from that uploaded source (replace the email address with the Bundle
-deployer's workspace user):
+Then start the new App and publish the source uploaded by `app-deploy`:
 
 ```bash
 just app-start
@@ -373,10 +366,24 @@ The App starts `rag.app.main:app`, reads the active Volume snapshot, uses the Ap
 principal for shared storage/model calls, and uses OBO only to establish the signed-in user's
 conversation owner. The deployed App does not read your local `.env` file.
 
-### 5. Refresh or redeploy later
+### 5. Later changes: choose the matching workflow
 
-Run `just bootstrap-deploy` only after changing the bootstrap Job code, Job parameters, schema,
-or bundle configuration. Otherwise, the commands below run the already deployed Workflow.
+The first deployment above is the only time you must run every step. Later, choose one row below.
+`bootstrap-*` commands change the **indexed data and App snapshot**. `app-*` and `deploy-code`
+commands change the **running App code**. They are independent.
+
+| What changed or happened? | Run these commands, in order | What does not happen |
+| --- | --- | --- |
+| Routine documentation refresh; the Job is already deployed | `just bootstrap-run` | No App-code deployment; unchanged pages are not re-chunked or re-embedded. |
+| Ingestion code, SQL schema, source roots, curated URLs, or Job configuration changed | `just bootstrap-deploy` then `just bootstrap-run` | No App-code deployment is needed unless App code also changed. |
+| App-only code changed: UI, retrieval, grounding, history, or request tracing; App is running | `just deploy-code` | No crawl, re-chunking, embedding, or snapshot rebuild. |
+| App-only code changed but the App is stopped | `just frontend`, `just setup-db`, `just app-deploy`, `just app-start`, then `just app-status` | No crawl, re-chunking, embedding, or snapshot rebuild. `app-start` starts the App and publishes the uploaded source. |
+| Both ingestion/data and App code changed | `just bootstrap-deploy`, `just bootstrap-run`, then use the appropriate App-code row above | Do not use a local FAISS snapshot for the App. |
+| A snapshot build stopped after chunks were saved | `just bootstrap-resume-snapshot` | No source fetch or re-chunking; only missing vectors are embedded. |
+| App FAISS artifacts need replacement and all compatible vectors already exist | `just bootstrap-rebuild-index` | No fetch, parsing, or embedding. |
+| Chunking/storage defect requires a full data repair | `just bootstrap-deploy` if the repair code changed, then `just bootstrap-repair` | The App automatically reads the new active snapshot; no App-code deployment is needed. |
+
+If `just deploy-code` ends with “App is not in RUNNING state,” use the stopped-App row instead.
 
 #### Refresh changed documentation
 
@@ -423,7 +430,7 @@ embeds the resulting vectors, builds a new Databricks-embedding FAISS snapshot, 
 The existing App reads that active snapshot automatically; this data rebuild does not require an
 App code deployment.
 
-#### Deploy a code-only update to an existing App (no re-index)
+#### Deploy a code-only update to an existing running App (no re-index)
 
 Use this sequence when the Databricks App already exists and the active App
 FAISS snapshot is still valid—for example, when deploying a UI, retrieval,
@@ -440,7 +447,8 @@ just deploy-code
 
 `RAG_APP_SOURCE_PATH` must name the workspace user who ran `bundle deploy`. `setup-db` only
 applies idempotent schema creation, and none of these commands crawl sources, create embeddings, or
-replace the active FAISS snapshot.
+replace the active FAISS snapshot. If the App is stopped, use `just app-start` after `just app-deploy`
+instead of `just app-publish`.
 
 The normal documentation refresh above recursively checks the bounded official roots in
 `rag/ingest/config/discovery_roots.yaml` and the manual supplement list. Unchanged sources do not
@@ -449,9 +457,8 @@ atomically marks it active; the previous active snapshot remains usable if refre
 fails. A direct 404, or removal from the configured source lists, must be confirmed in three runs
 before a page is removed.
 
-To deploy code/configuration changes, run `just deploy-code`. If the ingestion
-code, SQL schema, source configuration, or embedding endpoint changed, redeploy the bootstrap
-Bundle, run its Workflow, then redeploy the App Bundle. Do not rebuild a local
+For an ingestion change, redeploy the bootstrap Bundle and run its Workflow. For an App-code
+change, deploy App code. Do both only when both kinds of change are present. Do not rebuild a local
 Ollama snapshot for the Databricks App; the App snapshot must use the configured Databricks
 embedding endpoint.
 
