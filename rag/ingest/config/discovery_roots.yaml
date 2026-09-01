@@ -6,6 +6,30 @@
     - /aws/en/getting-started/
   category: get-started
   max_pages: 250
+- id: data-engineering
+  url: https://docs.databricks.com/aws/en/data-engineering/
+  allowed_path_prefixes:
+    - /aws/en/data-engineering/
+  category: data-engineering
+  max_pages: 250
+- id: lakebase-postgres
+  url: https://docs.databricks.com/aws/en/oltp/projects/
+  allowed_path_prefixes:
+    - /aws/en/oltp/
+  category: lakebase-postgres
+  max_pages: 250
+- id: data-warehousing
+  url: https://docs.databricks.com/aws/en/sql/
+  allowed_path_prefixes:
+    - /aws/en/sql/
+  category: data-warehousing
+  max_pages: 250
+- id: data-sharing
+  url: https://docs.databricks.com/aws/en/data-sharing/
+  allowed_path_prefixes:
+    - /aws/en/data-sharing/
+  category: data-sharing
+  max_pages: 250
 - id: genie
   url: https://docs.databricks.com/aws/en/genie/
   allowed_path_prefixes:
@@ -54,11 +78,35 @@
     - /aws/en/lakehouse-architecture/
   category: architecture
   max_pages: 250
+- id: compute
+  url: https://docs.databricks.com/aws/en/compute/
+  allowed_path_prefixes:
+    - /aws/en/compute/
+  category: compute
+  max_pages: 250
 - id: databricks-apps
   url: https://docs.databricks.com/aws/en/dev-tools/databricks-apps
   allowed_path_prefixes:
     - /aws/en/dev-tools/databricks-apps
   category: databricks-apps
+  max_pages: 250
+- id: notebooks
+  url: https://docs.databricks.com/aws/en/notebooks/
+  allowed_path_prefixes:
+    - /aws/en/notebooks/
+  category: notebooks
+  max_pages: 250
+- id: tables
+  url: https://docs.databricks.com/aws/en/tables/
+  allowed_path_prefixes:
+    - /aws/en/tables/
+  category: tables
+  max_pages: 250
+- id: apache-spark
+  url: https://docs.databricks.com/aws/en/spark/
+  allowed_path_prefixes:
+    - /aws/en/spark/
+  category: apache-spark
   max_pages: 250
 - id: admin
   url: https://docs.databricks.com/aws/en/admin/
@@ -84,4 +132,22 @@
   allowed_path_prefixes:
     - /aws/en/ai-gateway
   category: ai-gateway
+  max_pages: 250
+- id: best-practices
+  url: https://docs.databricks.com/aws/en/getting-started/best-practices
+  allowed_path_prefixes:
+    - /aws/en/getting-started/best-practices
+  category: best-practices
+  max_pages: 250
+- id: migration
+  url: https://docs.databricks.com/aws/en/migration/
+  allowed_path_prefixes:
+    - /aws/en/migration/
+  category: migration
+  max_pages: 250
+- id: glossary
+  url: https://docs.databricks.com/aws/en/resources/glossary
+  allowed_path_prefixes:
+    - /aws/en/resources/glossary
+  category: glossary
   max_pages: 250
