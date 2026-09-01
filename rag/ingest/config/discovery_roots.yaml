@@ -21,7 +21,11 @@
 - id: data-warehousing
   url: https://docs.databricks.com/aws/en/sql/
   allowed_path_prefixes:
-    - /aws/en/sql/
+    - /aws/en/sql/get-started/
+    - /aws/en/sql/user/sql-editor/
+    - /aws/en/sql/user/queries/
+    - /aws/en/sql/user/alerts/
+    - /aws/en/sql/dbsql-api-latest
   category: data-warehousing
   max_pages: 250
 - id: data-sharing
