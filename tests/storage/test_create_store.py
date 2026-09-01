@@ -11,7 +11,7 @@ def _settings(**overrides) -> Settings:
     values = {
         "catalog": "catalog", "schema": "schema", "warehouse_id": "warehouse",
         "artifact_volume": "artifacts", "embedding_model": "embedding",
-        "agent_candidates_per_search": 10, "relevance_threshold": 0.35,
+        "agent_candidates_per_search": 10, "relevance_threshold": 0.5,
         "chat_base_url": None, "chat_model": None, "chat_api_key": None,
         "embedding_base_url": "http://localhost", "databricks_profile": None,
         "storage_backend": "databricks",

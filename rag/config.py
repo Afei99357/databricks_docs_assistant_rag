@@ -52,7 +52,7 @@ class Settings:
             os.getenv("RAG_ARTIFACT_VOLUME", "rag_artifacts"),
             os.getenv("RAG_EMBEDDING_MODEL", "qwen3-embedding:4b"),
             int(os.getenv("RAG_AGENT_CANDIDATES_PER_SEARCH", "10")),
-            float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.35")),
+            float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.5")),
             os.getenv("RAG_CHAT_BASE_URL") or legacy_base_url or None,
             os.getenv("RAG_CHAT_MODEL") or legacy_model or None,
             os.getenv("RAG_CHAT_API_KEY") or os.getenv("OPENAI_API_KEY") or None,

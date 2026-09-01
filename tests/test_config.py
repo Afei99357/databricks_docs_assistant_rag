@@ -3,7 +3,7 @@ from rag.config import Settings
 
 def test_volume_path_uses_catalog_and_schema_path_segments():
     settings = Settings(
-        "catalog", "schema", "warehouse", "artifacts", "embedding", 10, 0.35,
+        "catalog", "schema", "warehouse", "artifacts", "embedding", 10, 0.5,
         "http://localhost", "model", None, "http://localhost", None,
     )
 

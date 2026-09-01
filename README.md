@@ -1,18 +1,16 @@
 # Custom Databricks Documentation RAG
 
-An internal, inspectable RAG application over official Databricks documentation. It uses
-local Qwen embeddings and FAISS for retrieval. It can use Unity Catalog for governed metadata,
-feedback, evaluation results, and immutable index artifacts, or SQLite for a fully local store.
-It does not use Genie Agent,
-Volume Content Search, AI Search, or Vector Search.
+A citation-grounded RAG assistant for official Databricks documentation, available in local
+SQLite mode or as a governed Databricks App.
 
 Read the [technical case study and architecture walkthrough](https://liaoyunfei.name/1._Agentic_Databricks_Documentation_Assistant/).
 
 ## Contents
 
-- [Current status](#current-status)
+- [What this project is](#what-this-project-is)
 - [Databricks App mode](#databricks-app-mode)
 - [Local setup](#local-setup)
+  - [Local prerequisites](#local-prerequisites)
   - [Local configuration reference](#local-configuration-reference)
   - [Index and repair commands](#index-and-repair-commands)
   - [Measuring retrieval quality](#measuring-retrieval-quality)
@@ -27,31 +25,37 @@ Read the [technical case study and architecture walkthrough](https://liaoyunfei.
 - [Data tables](#data-tables)
 - [License](#license)
 
-## Current status
+## What this project is
 
-The local prototype includes official-source discovery/fetch/extraction, deterministic
-chunking, local Qwen embedding adapters, FAISS snapshot validation/activation, retrieval
-evaluation, a grounded Flask UI, and pluggable Databricks or SQLite storage. No real workspace values or
-credentials belong in this repository.
+This is an inspectable, citation-grounded RAG assistant for official Databricks documentation.
+It fetches and chunks documentation, embeds the chunks, retrieves evidence with FAISS, and
+generates answers that retain their supporting citations.
+
+The same application supports two deployment modes:
+
+- **Local:** SQLite for storage, Ollama for embeddings, a local FAISS snapshot, and a local or
+  OpenAI-compatible chat server.
+- **Databricks:** Delta tables and a Unity Catalog Volume for governed storage, Databricks model
+  serving endpoints, a refresh Workflow, and a Databricks App for the user interface.
+
+The repository contains source code and configuration templates only. Credentials, workspace
+values, and generated data remain outside Git.
 
 ## Databricks App mode
 
-The same Flask application can run as a Databricks App. It uses the App service principal
-for the shared FAISS snapshot in the artifact Volume, Delta conversation history/feedback,
-and model inference. It uses the forwarded user token only to derive a trusted history owner;
-no browser-supplied user ID is accepted.
+The Databricks deployment separates data refresh from user-serving code:
 
-- embeddings: `databricks-qwen3-embedding-0-6b`
-- retrieval reasoning and answer generation: the configured `RAG_CHAT_MODEL`
-  (tested with `databricks-claude-sonnet-4-5`)
-- local `rag serve` can use Ollama or any OpenAI-compatible server such as
-  llama.cpp hosting Muse.
+- The **refresh Workflow** discovers sources, chunks changed documents, reuses cached embeddings,
+  and publishes the active FAISS snapshot.
+- The **Databricks App** reads that active snapshot and serves the chat interface; it does not
+  crawl or rebuild the corpus during a user request.
+- Document and query embeddings use `databricks-qwen3-embedding-0-6b`. The chat model is the
+  serving endpoint configured by `RAG_DATABRICKS_CHAT_ENDPOINT`.
+- The App service principal accesses the shared Volume, Delta tables, and model endpoints. The
+  forwarded user token is used only to establish the signed-in user's conversation owner.
 
-Before deploying, build and publish a separate snapshot with the Databricks Qwen embedding
-endpoint. It is stored under `rag_artifacts/app-qwen3-embedding-0-6b/`, separately from any
-local/Ollama artifact. A FAISS index built with the local Ollama model cannot be queried with a
-different embedding model. The bundle requests least-privilege access to the artifact Volume,
-history/feedback tables, SQL warehouse, and the two model endpoints.
+The App snapshot is stored under `rag_artifacts/app-qwen3-embedding-0-6b/` and is separate from
+local Ollama snapshots because indexes from different embedding models cannot be mixed.
 
 ## Local setup
 
@@ -59,6 +63,30 @@ The local server uses Ollama for embeddings and a local FAISS directory for retr
 model is independently configurable: use Muse through llama.cpp's OpenAI-compatible API, native
 Ollama, or a Databricks serving endpoint. The local setup below uses SQLite for documents,
 history, feedback, and traces; it requires no Databricks account or SQL warehouse.
+
+### Local prerequisites
+
+On a new computer, install these tools before starting:
+
+- Git
+- Python 3.10 or newer
+- [uv](https://docs.astral.sh/uv/getting-started/installation/), for the Python environment and dependencies
+- [just](https://just.systems/install/), for the project commands
+- Node.js and npm, for the frontend build
+- [Ollama](https://ollama.com/download), for local document and query embeddings
+- An OpenAI-compatible chat server, such as llama.cpp or Ollama, with a chat model available
+
+Verify the command-line tools before continuing:
+
+```bash
+git --version
+python3 --version
+uv --version
+just --version
+node --version
+npm --version
+ollama --version
+```
 
 Every command below is a [`just`](https://github.com/casey/just) recipe. Run `just` on its own
 to list them. The recipes load `.env` themselves, so no `set -a` / `source` step is needed.
@@ -272,6 +300,32 @@ You need a Unity Catalog-enabled workspace, a Pro or Serverless SQL warehouse, D
 and serverless Jobs. The deploying identity needs permission to create the target catalog/schema,
 use the warehouse, query the two model endpoints, and create Apps and Jobs. The Workflow also
 needs outbound access to the configured documentation sites.
+
+On a new computer, install these local tools before deploying:
+
+- Git
+- Python 3.10 or newer with pip
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+- [just](https://just.systems/install/)
+- Node.js and npm, required by `just frontend`
+- The [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install), required by all `databricks ...` commands
+
+After cloning the repository, install the project dependencies including the Databricks SDK:
+
+```bash
+uv sync --extra dev --extra databricks
+```
+
+Verify the deployment tools:
+
+```bash
+python3 --version
+uv --version
+just --version
+node --version
+npm --version
+databricks --version
+```
 
 Authenticate a CLI profile for the target workspace:
 

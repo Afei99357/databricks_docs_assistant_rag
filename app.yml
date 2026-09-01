@@ -14,7 +14,7 @@ env:
   - name: RAG_AGENT_CANDIDATES_PER_SEARCH
     value: "10"
   - name: RAG_RELEVANCE_THRESHOLD
-    value: "0.35"
+    value: "0.5"
   - name: RAG_WAREHOUSE_ID
     valueFrom: rag_sql_warehouse
   - name: RAG_ARTIFACT_ROOT
