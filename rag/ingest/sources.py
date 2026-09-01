@@ -38,6 +38,17 @@ CATEGORIES = frozenset(
         "ai-bi",
         "get-started",
         "architecture",
+        "data-engineering",
+        "lakebase-postgres",
+        "data-warehousing",
+        "data-sharing",
+        "compute",
+        "notebooks",
+        "tables",
+        "apache-spark",
+        "best-practices",
+        "migration",
+        "glossary",
     }
 )
 TRACKING_PARAMS = {
